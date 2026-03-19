@@ -1,107 +1,151 @@
 # capacitor-messenger-notifications
 
+[![license](https://img.shields.io/npm/l/capacitor-messenger-notifications.svg)](https://github.com/codecraft-studio/capacitor-messenger-notifications/blob/main/LICENSE)
+
 Capacitor plugin for managing messenger-style notifications with WebSocket support on Android and iOS. Built for end-to-end encrypted chat applications.
+
+## Table of Contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Usage](#usage)
+  - [JavaScript Examples](#javascript-examples)
+  - [Native Integration (Android/iOS)](#native-integration-androidios)
+- [Configuration](#configuration)
+- [Platform Implementation](#platform-implementation)
+- [Setup by Platform](#setup-by-platform)
+- [API](#api)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-- **Native Notification Grouping**: Automatically groups notifications by Room ID using `MessagingStyle` on Android and `threadIdentifier` on iOS.
-- **Persistent WebSocket (Android)**: Foreground service that maintains a persistent connection to receive messages even when the app is in the background or killed.
-- **Background Fetch (iOS)**: Spin up temporary socket sessions on push notification arrival to retrieve unread messages.
-- **Smart Deduplication**: Prevents duplicate notifications by tracking recently shown message IDs and room updates.
-- **Cold Start Support**: Retrieve the `roomId` that launched the app from a notification click.
+- **Native Notification Grouping**: Automatically groups messages by room ID using `MessagingStyle` (Android) and `threadIdentifier` (iOS).
+- **Persistent WebSocket (Android)**: Foreground service that stays alive to receive messages even when the app is killed.
+- **Background Fetch (iOS)**: Automatically wakes up to fetch unread messages when a silent push is received.
+- **End-to-End Encryption Ready**: Designed to handle encrypted payloads and decrypt them on-device before showing notifications.
 
-## Installation
+## Requirements
+
+- **Capacitor**: ^6.0.0 || ^7.0.0 || ^8.0.0
+- **Node.js**: 18.x or higher
+- **iOS**: 13.0 or higher
+- **Android**: API level 22 (Android 5.1) or higher
+
+## Install
 
 ```bash
 npm install capacitor-messenger-notifications
 npx cap sync
 ```
 
-## Quick Start
+## Usage
 
-### 1. Register the Plugin
+### JavaScript Examples
+
+#### Start Persistent Socket (Android)
 
 ```typescript
 import { MessengerNotifications } from 'capacitor-messenger-notifications';
 
-// Request permissions
-await MessengerNotifications.requestPermissions();
-
-// Check for app launch via notification (Cold Start)
-const { roomId } = await MessengerNotifications.getPendingRoomId();
-if (roomId) {
-  console.log('App launched from notification for room:', roomId);
-}
-```
-
-### 2. Manage Socket Connection (Android Background)
-
-```typescript
-// Start the persistent foreground service on Android
+// Starts a foreground service on Android to maintain a heartbeat connection
 await MessengerNotifications.startPersistentSocket({
-  url: 'wss://your-socket-server.com',
+  url: 'wss://your-chat-server.com',
   token: 'YOUR_AUTH_TOKEN'
 });
-
-// Stop the service (e.g. on logout)
-await MessengerNotifications.stopPersistentSocket();
 ```
 
-### 3. Show Manual Notifications
+#### Show a Manual Notification
 
 ```typescript
 await MessengerNotifications.showNotification({
   title: 'John Doe',
   body: 'Hey, how are you?',
-  roomId: 123,
-  roomName: 'General Chat', // Optional
-  messageId: 'msg_001',      // Optional for deduplication
-  timestamp: Date.now()     // Optional
+  roomId: 101,
+  roomName: 'General Chat',
+  messageId: 'uuid-12345',
+  timestamp: Date.now()
 });
 ```
 
+### Native Integration (Android/iOS)
+
+This plugin is often triggered from native background tasks (FCM / Silent Push).
+
+- **Android**: Use `EncryptedMessageNotifier.notifyFromSocketPayload(context, data)` from your background services.
+- **iOS**: Use `TemporarySocketSessionManager.shared.fetchAndNotify(...)` inside `didReceiveRemoteNotification`.
+
 ## Configuration
 
-Most configurations for this plugin are handled dynamically at runtime via the API. However, you can also define default values in your **`capacitor.config.json`** for cleaner code:
+Most configurations are handled dynamically via the API, but you can define defaults in **`capacitor.config.json`**:
 
 ```json
 {
   "plugins": {
     "MessengerNotifications": {
       "defaultSocketUrl": "wss://your-default-server.com",
-      "notificationChannelId": "my_custom_channel",
-      "notificationChannelName": "My Messenger Notifications"
+      "notificationChannelId": "chat_messages",
+      "notificationChannelName": "Messenger Notifications"
     }
   }
 }
 ```
 
-*Note: Dynamically provided values in `startPersistentSocket` or `showNotification` will always take precedence over static configurations.*
+## Platform Implementation
 
-### Android Configuration Details
+| Platform | Implementation |
+| --- | --- |
+| Android | Foreground Service + NotificationManager with `MessagingStyle`. |
+| iOS | `UNNotificationContent` with `threadIdentifier` + SocketIO Task. |
 
-- **Channel ID**: Defaults to `chat_messages`.
-- **Foreground Service**: Always runs with a persistent notification to ensure the socket stays alive.
+## Setup by Platform
 
-### iOS Configuration Details
+> For full host‑app steps (Android & iOS), see `HOST_APP_SETUP.md`.
 
-- **Background Fetch**: Depends on the OS's internal scheduling. High-priority pushes are recommended to trigger the `TemporarySocketSessionManager` immediately.
+### Android
+
+- **AndroidManifest.xml**: Add `FOREGROUND_SERVICE` and `POST_NOTIFICATIONS` permissions.
+- **ProGuard**: Add `-keep` rules for the plugin and Socket.IO.
+
+### iOS
+
+- **Capabilities**: Enable **Push Notifications** and **Background Modes** (Background fetch, Remote notifications).
 
 ## API
 
 | Method | Description |
-| :--- | :--- |
-| `showNotification(options)` | Shows a native notification, grouped by room. |
-| `clearRoomNotification({ roomId })` | Clears notifications for a specific room. |
-| `getPendingRoomId()` | Returns the `roomId` that triggered the app launch. |
-| `startPersistentSocket(options)` | Starts the Android foreground socket service. |
-| `stopPersistentSocket()` | Stops the background service. |
-| `checkPermissions()` | Checks notification permissions. |
-| `requestPermissions()` | Requests notification permissions. |
+| --- | --- |
+| `startPersistentSocket(options)` | Starts the background socket service (Android only). |
+| `stopPersistentSocket()` | Stops the background socket service. |
+| `showNotification(options)` | Manually triggers a native grouped notification. |
+| `clearRoomNotification(options)` | Clears all notifications for a specific room. |
+| `getPendingRoomId()` | Returns the roomId if the app was launched from a notification. |
 
-## Platform Setup
+---
 
-For detailed platform-specific configuration (Permissions, Background Modes, AppDelegate), see [HOST_APP_SETUP.md](HOST_APP_SETUP.md).
+## Troubleshooting
+
+### Android: Service is killed
+
+Ensure you have added `android:foregroundServiceType="dataSync"` to the service declaration in `AndroidManifest.xml` as required by Android 14+.
+
+### iOS: Notifications aren't grouping
+
+Ensure `threadIdentifier` is correctly set in the push payload or that you are passing the same `roomId` to `showNotification`.
+
+## Development
+
+- **Build**: `npm run build`
+- **Lint**: `npm run lint`
+- **Format**: `npm run fmt`
+- **Verify**: `npm run verify`
+
+## Contributing
+
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## License
 
