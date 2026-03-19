@@ -1,6 +1,6 @@
 # capacitor-messenger-notifications
 
-[![license](https://img.shields.io/npm/l/capacitor-messenger-notifications.svg)](https://github.com/codecraft-studio/capacitor-messenger-notifications/blob/main/LICENSE)
+[![license](https://img.shields.io/npm/l/capacitor-messenger-notifications.svg)](https://github.com/imuhammadnadeem/capacitor-messenger-notifications/blob/main/LICENSE)
 
 Capacitor plugin for managing messenger-style notifications with WebSocket support on Android and iOS. Built for end-to-end encrypted chat applications.
 
