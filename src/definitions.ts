@@ -15,6 +15,8 @@ export interface MessengerNotificationsPlugin {
     messageId?: string;
     timestamp?: number;
     roomName?: string;
+    senderId?: number;
+    avatarSvg?: string;
   }): Promise<void>;
 
   /**
@@ -46,4 +48,9 @@ export interface MessengerNotificationsPlugin {
    * Request notification permissions.
    */
   requestPermissions(): Promise<PermissionStatus>;
+
+  /**
+   * Registers the FCM token with the backend server.
+   */
+  registerFcmToken(): Promise<void>;
 }

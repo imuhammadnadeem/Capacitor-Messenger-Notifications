@@ -10,7 +10,10 @@ public class MessengerNotificationsPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "clearRoomNotification", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getPendingRoomId", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startPersistentSocket", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "stopPersistentSocket", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "stopPersistentSocket", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "checkPermissions", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestPermissions", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "registerFcmToken", returnType: CAPPluginReturnPromise)
     ]
 
     private static var _pendingRoomId: Int? = nil
@@ -41,7 +44,7 @@ public class MessengerNotificationsPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func clearRoomNotification(_ call: CAPPluginCall) {
         let roomId = call.getInt("roomId") ?? 0
         if roomId > 0 {
-            NotificationHelper.clearRoomHistory(roomId: roomId)
+            NotificationHelper.clearRoomHistory(roomId: roomId, cancelNotification: true)
         }
         call.resolve()
     }
@@ -60,17 +63,46 @@ public class MessengerNotificationsPlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("Missing URL or token")
             return
         }
-        
-        // On iOS, persistent sockets are usually handled differently (or not at all in same way as Android service)
-        // because of background limits. But for now we'll store them.
-        SafeStorageStore.set("socket_url", value: url)
-        SafeStorageStore.set("auth_token", value: token)
-        
-        // We'll call complete for now.
+
+        SafeStorageStore.set("socketUrl", value: url)
+        SafeStorageStore.set("token", value: token)
+
         call.resolve()
     }
 
     @objc func stopPersistentSocket(_ call: CAPPluginCall) {
+        call.resolve()
+    }
+
+    @objc func checkPermissions(_ call: CAPPluginCall) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let state: String
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                state = "granted"
+            case .denied:
+                state = "denied"
+            case .notDetermined:
+                state = "prompt"
+            @unknown default:
+                state = "prompt"
+            }
+            call.resolve(["notifications": state])
+        }
+    }
+
+    @objc func requestPermissions(_ call: CAPPluginCall) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error = error {
+                call.reject(error.localizedDescription)
+                return
+            }
+            call.resolve(["notifications": granted ? "granted" : "denied"])
+        }
+    }
+
+    @objc func registerFcmToken(_ call: CAPPluginCall) {
+        FcmTokenRegistrar.registerIfPossible()
         call.resolve()
     }
 }

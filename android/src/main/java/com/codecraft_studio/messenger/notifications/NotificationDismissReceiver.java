@@ -7,14 +7,13 @@ import android.util.Log;
 
 public class NotificationDismissReceiver extends BroadcastReceiver {
 
-    private static final String TAG = "NotificationDismiss";
+    private static final String TAG = "NotificationDismissRcvr";
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        if (context == null || intent == null) return;
         int roomId = intent.getIntExtra(NotificationHelper.EXTRA_ROOM_ID, 0);
-        Log.d(TAG, "Notification dismissed for roomId: " + roomId);
-        if (roomId > 0) {
-            NotificationHelper.onNotificationDismissed(context, roomId);
-        }
+        Log.d(TAG, "Notification dismissed from tray for roomId=" + roomId);
+        NotificationHelper.onNotificationDismissed(context.getApplicationContext(), roomId);
     }
 }

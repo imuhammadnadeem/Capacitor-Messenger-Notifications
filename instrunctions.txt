@@ -1,0 +1,9 @@
+git add package.json
+git commit -m "Release 1.0.0”
+git push origin main
+
+npm publish --access public
+git tag v1.0.0
+git push origin v1.0.0
+
+gh release create v1.0.0 --repo imuhammadnadeem/Capacitor-Messenger-Notifications --title "v1.0.0" --notes "npm: https://www.npmjs.com/package/capacitor-messenger-notifications/v/1.0.0"

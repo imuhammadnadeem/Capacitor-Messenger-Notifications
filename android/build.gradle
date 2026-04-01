@@ -43,6 +43,7 @@ android {
 repositories {
     google()
     mavenCentral()
+    maven { url 'https://jitpack.io' }
 }
 
 dependencies {
@@ -50,12 +51,21 @@ dependencies {
     implementation project(':capacitor-android')
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.core:core:$androidxCoreVersion"
-    
+
     // Socket.IO client for Android
     implementation ('io.socket:socket.io-client:2.1.0') {
         exclude group: 'org.json', module: 'json'
     }
-    
+
+    // Libsodium JNI for E2EE decryption
+    implementation 'com.github.joshjdevl.libsodiumjni:libsodium-jni-aar:2.0.2'
+
+    // Google Play Services for GMS availability check
+    implementation 'com.google.android.gms:play-services-base:18.2.0'
+
+    // AndroidSVG for rendering avatar SVGs in notifications
+    implementation 'com.caverock:androidsvg:1.4'
+
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'

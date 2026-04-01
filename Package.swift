@@ -11,7 +11,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", from: "7.1.0"),
-        .package(url: "https://github.com/socketio/socket.io-client-swift.git", from: "16.1.0")
+        .package(url: "https://github.com/socketio/socket.io-client-swift.git", from: "16.1.0"),
+        .package(url: "https://github.com/jedisct1/swift-sodium.git", from: "0.9.1")
     ],
     targets: [
         .target(
@@ -19,7 +20,8 @@ let package = Package(
             dependencies: [
                 .product(name: "Capacitor", package: "capacitor-swift-pm"),
                 .product(name: "Cordova", package: "capacitor-swift-pm"),
-                .product(name: "SocketIO", package: "socket.io-client-swift")
+                .product(name: "SocketIO", package: "socket.io-client-swift"),
+                .product(name: "Sodium", package: "swift-sodium")
             ],
             path: "ios/Sources/MessengerNotificationsPlugin")
     ]

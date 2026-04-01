@@ -10,6 +10,8 @@ export class MessengerNotificationsWeb extends WebPlugin implements MessengerNot
     messageId?: string;
     timestamp?: number;
     roomName?: string;
+    senderId?: number;
+    avatarSvg?: string;
   }): Promise<void> {
     console.log('[MessengerNotificationsWeb] showNotification:', options);
     if ('Notification' in window) {
@@ -54,5 +56,9 @@ export class MessengerNotificationsWeb extends WebPlugin implements MessengerNot
       return { notifications: state };
     }
     return { notifications: 'denied' };
+  }
+
+  async registerFcmToken(): Promise<void> {
+    console.log('[MessengerNotificationsWeb] registerFcmToken (not supported on web)');
   }
 }

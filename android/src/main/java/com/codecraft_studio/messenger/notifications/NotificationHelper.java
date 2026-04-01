@@ -1,9 +1,13 @@
 package com.codecraft_studio.messenger.notifications;
 
-import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Rect;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -14,6 +18,16 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.Person;
+import androidx.core.content.pm.ShortcutInfoCompat;
+import androidx.core.content.pm.ShortcutManagerCompat;
+import androidx.core.graphics.drawable.IconCompat;
+
+import com.caverock.androidsvg.SVG;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
@@ -22,17 +36,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 final class NotificationHelper {
 
     private static final String TAG = "NotificationHelper";
     private static final String CHANNEL_ID = "chat_messages";
     private static final String CHANNEL_NAME = "Chat Messages";
-    private static final String GROUP_KEY_PREFIX = "com.codecraft_studio.messenger.notifications.ROOM_GROUP.";
+    private static String groupKeyAllRooms(Context context) {
+        return context.getPackageName() + ".ALL_ROOMS";
+    }
     private static final int GENERIC_NOTIFICATION_ID = 900000;
+    private static final int GLOBAL_SUMMARY_NOTIFICATION_ID = 900001;
     private static final String PREFS_NAME = "notification_history";
     private static final String KEY_RECENT_IDS = "recent_message_ids";
     private static final String KEY_DISMISSED_IDS = "dismissed_message_ids";
@@ -43,12 +57,10 @@ final class NotificationHelper {
     private static final int MAX_DISMISSED_IDS = 500;
     static final String EXTRA_ROOM_ID = "extra_room_id";
 
-    // Static roomId that launched the app
-    private static Integer pendingRoomId = null;
-
     private static final Map<Integer, List<MessageRecord>> roomMessages = new ConcurrentHashMap<>();
     private static final Map<Integer, String> roomNamesById = new ConcurrentHashMap<>();
     private static final Map<Integer, String> userNamesById = new ConcurrentHashMap<>();
+
     private static final int MAX_MESSAGES_PER_ROOM = 50;
 
     private static final Set<String> recentMessageIds = Collections.synchronizedSet(new LinkedHashSet<>());
@@ -58,40 +70,24 @@ final class NotificationHelper {
     private static volatile long serverTimeOffset = 0L;
     private static final Object offsetLock = new Object();
 
-    static synchronized Integer getPendingRoomId() {
-        return pendingRoomId;
-    }
-
-    static synchronized void setPendingRoomId(Integer roomId) {
-        pendingRoomId = roomId;
-    }
-
-    static synchronized void consumePendingRoomId() {
-        pendingRoomId = null;
-    }
-
-    private static String roomGroupKey(int roomId) {
-        return GROUP_KEY_PREFIX + roomId;
-    }
-
-    private static int roomSummaryId(int roomId) {
-        return roomId + 500000;
-    }
+    // Pending room ID for cold-start navigation
+    private static volatile Integer pendingRoomId = null;
 
     static class MessageRecord {
-
-        @Nullable
-        final String id;
-
+        @Nullable final String id;
         final String sender;
+        final String senderKey;
+        @Nullable final String avatarSvg;
         final String text;
         final long timestamp;
         final boolean hasServerTimestamp;
         final int quality;
 
-        MessageRecord(@Nullable String id, String sender, String text, long timestamp, boolean hasServerTimestamp) {
+        MessageRecord(@Nullable String id, String sender, String senderKey, String text, long timestamp, boolean hasServerTimestamp, @Nullable String avatarSvg) {
             this.id = id;
             this.sender = sender;
+            this.senderKey = senderKey;
+            this.avatarSvg = avatarSvg;
             this.text = text;
             this.timestamp = timestamp;
             this.hasServerTimestamp = hasServerTimestamp;
@@ -108,51 +104,73 @@ final class NotificationHelper {
 
     private NotificationHelper() {}
 
+    static void setPendingRoomId(int roomId) {
+        pendingRoomId = roomId > 0 ? roomId : null;
+    }
+
+    static Integer getPendingRoomId() {
+        return pendingRoomId;
+    }
+
+    static void consumePendingRoomId() {
+        pendingRoomId = null;
+    }
+
     static void clearRoomHistory(Context context, int roomId, boolean cancelNotification) {
+        Log.d(TAG, "clearRoomHistory() roomId=" + roomId + " cancel=" + cancelNotification);
         roomMessages.remove(roomId);
         if (cancelNotification) {
             NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
             if (manager != null) {
                 manager.cancel(resolveNotificationId(roomId));
-                manager.cancel(roomSummaryId(roomId));
+                postOrCancelGlobalSummary(context, manager);
             }
         }
     }
 
     static void showRoomNotification(Context context, String title, String body, int roomId, @Nullable String messageId, long timestamp) {
-        showRoomNotification(context, title, body, roomId, null, messageId, timestamp, false);
+        showRoomNotification(context, title, body, roomId, 0, messageId, timestamp, false);
     }
 
-    static void showRoomNotification(
-        Context context,
-        String title,
-        String body,
-        int roomId,
-        @Nullable String roomName,
-        @Nullable String messageId,
-        long timestamp,
-        boolean isSync
-    ) {
-        if (addMessageToHistory(context, roomId, 0, messageId, title, body, roomName, timestamp, isSync)) {
+    static void showRoomNotification(Context context, String title, String body, int roomId, int senderId, @Nullable String messageId, long timestamp, boolean isSync) {
+        if (addMessageToHistory(context, roomId, senderId, messageId, title, body, null, timestamp, isSync, null)) {
             triggerNotificationUpdate(context, roomId, title);
         }
     }
 
-    static boolean addMessageToHistory(
-        Context context,
-        int roomId,
-        int senderId,
-        @Nullable String messageId,
-        String title,
-        String body,
-        @Nullable String roomName,
-        long timestamp,
-        boolean isSync
-    ) {
+    static void showRoomNotification(Context context, String title, String body, int roomId, @Nullable String roomName, @Nullable String messageId, long timestamp, boolean isSync) {
+        showRoomNotification(context, title, body, roomId, 0, roomName, messageId, timestamp, isSync);
+    }
+
+    static void showRoomNotification(Context context, String title, String body, int roomId, int senderId, @Nullable String roomName, @Nullable String messageId, long timestamp, boolean isSync) {
+        if (addMessageToHistory(context, roomId, senderId, messageId, title, body, roomName, timestamp, isSync, null)) {
+            triggerNotificationUpdate(context, roomId, title);
+        }
+    }
+
+    static void showRoomNotification(Context context, String title, String body, int roomId, int senderId, @Nullable String roomName, @Nullable String messageId, long timestamp, boolean isSync, @Nullable String avatarSvg) {
+        if (addMessageToHistory(context, roomId, senderId, messageId, title, body, roomName, timestamp, isSync, avatarSvg)) {
+            triggerNotificationUpdate(context, roomId, title);
+        }
+    }
+
+    static boolean addMessageToHistory(Context context, int roomId, @Nullable String messageId, String title, String body, long timestamp, boolean isSync) {
+        return addMessageToHistory(context, roomId, 0, messageId, title, body, null, timestamp, isSync);
+    }
+
+    static boolean addMessageToHistory(Context context, int roomId, int senderId, @Nullable String messageId, String title, String body, @Nullable String roomName, long timestamp, boolean isSync) {
+        return addMessageToHistory(context, roomId, senderId, messageId, title, body, roomName, timestamp, isSync, null);
+    }
+
+    static boolean addMessageToHistory(Context context, int roomId, int senderId, @Nullable String messageId, String title, String body, @Nullable String roomName, long timestamp, boolean isSync, @Nullable String avatarSvg) {
         if (TextUtils.isEmpty(body)) return false;
-        if (roomId <= 0) return false;
+        if (roomId <= 0) {
+            Log.v(TAG, "Ignoring notification history for room 0");
+            return false;
+        }
 
         loadNamesIfEmpty(context);
+
         if (roomId > 0 && !TextUtils.isEmpty(roomName) && !isGenericTitle(roomName)) {
             setRoomName(context, roomId, roomName);
         }
@@ -210,8 +228,10 @@ final class NotificationHelper {
         }
 
         if (senderName == null || isGenericTitle(senderName)) {
-            senderName = "New Message";
+            senderName = getAppName(context);
         }
+
+        String senderKey = senderId > 0 ? String.valueOf(senderId) : senderName;
 
         String normText = body.trim();
         boolean hasId = (messageId != null && !messageId.isEmpty() && !"null".equalsIgnoreCase(messageId));
@@ -226,6 +246,7 @@ final class NotificationHelper {
             if (hasId && !isSync) {
                 loadRecentIdsIfEmpty(context);
                 if (recentMessageIds.contains(messageId)) {
+                    Log.v(TAG, "Deduplicated by persistent ID: " + messageId);
                     return false;
                 }
             }
@@ -233,20 +254,20 @@ final class NotificationHelper {
             if (hasId) {
                 loadDismissedIdsIfEmpty(context);
                 if (dismissedMessageIds.contains(messageId)) {
+                    Log.v(TAG, "Skipping dismissed message ID: " + messageId);
                     return false;
                 }
             }
 
             if (roomId > 0 && hasServerTimestamp) {
-                loadDismissedCutoffByRoomIfEmpty(context);
-                Long value = dismissedUntilByRoom.get(roomId);
-                long dismissedUntil = value == null ? 0L : value;
+                long dismissedUntil = getDismissedUntilForRoom(context, roomId);
                 if (dismissedUntil > 0L && timestamp <= dismissedUntil) {
+                    Log.v(TAG, "Skipping message at/before dismissed cutoff. roomId=" + roomId + " ts=" + timestamp + " cutoff=" + dismissedUntil);
                     return false;
                 }
             }
 
-            MessageRecord newRec = new MessageRecord(messageId, senderName, body, useTimestamp, hasServerTimestamp);
+            MessageRecord newRec = new MessageRecord(messageId, senderName, senderKey, body, useTimestamp, hasServerTimestamp, avatarSvg);
 
             for (int i = 0; i < history.size(); i++) {
                 MessageRecord rec = history.get(i);
@@ -263,11 +284,10 @@ final class NotificationHelper {
                     continue;
                 }
 
-                if (
-                    normText.equalsIgnoreCase(rec.text.trim()) &&
-                    senderName.equals(rec.sender) &&
-                    Math.abs(useTimestamp - rec.timestamp) < 300000
-                ) {
+                if (normText.equalsIgnoreCase(rec.text.trim()) &&
+                        senderKey.equals(rec.senderKey) &&
+                        Math.abs(useTimestamp - rec.timestamp) < 300000) {
+
                     if ((hasId && (rec.id == null || rec.id.isEmpty())) || newRec.quality > rec.quality) {
                         history.remove(i);
                         break;
@@ -302,19 +322,19 @@ final class NotificationHelper {
         }
 
         PendingIntent pendingIntent = PendingIntent.getActivity(
-            context,
-            resolveRequestCode(roomId),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                context,
+                resolveRequestCode(roomId),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
         Intent dismissIntent = new Intent(context, NotificationDismissReceiver.class);
         dismissIntent.putExtra(EXTRA_ROOM_ID, roomId);
         PendingIntent dismissPendingIntent = PendingIntent.getBroadcast(
-            context,
-            resolveRequestCode(roomId) + 1000000,
-            dismissIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                context,
+                resolveRequestCode(roomId) + 1000000,
+                dismissIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
         String convTitle = (title != null && title.contains(" in ")) ? title.split(" in ")[1] : title;
@@ -328,71 +348,133 @@ final class NotificationHelper {
             convTitle = "Chat";
         }
 
+        String shortcutId = "room_" + resolveNotificationId(roomId);
+        Bitmap roomBitmap = buildInitialsBitmap(context, convTitle);
+        IconCompat roomIconCompat = IconCompat.createWithBitmap(roomBitmap);
+
+        ShortcutInfoCompat shortcutInfo = new ShortcutInfoCompat.Builder(context, shortcutId)
+                .setShortLabel(convTitle)
+                .setLongLabel(convTitle)
+                .setIcon(roomIconCompat)
+                .setIntent(intent != null ? intent : new Intent())
+                .setLongLived(true)
+                .setCategories(Collections.singleton("android.shortcut.conversation"))
+                .build();
+        ShortcutManagerCompat.pushDynamicShortcut(context, shortcutInfo);
+
+        int notificationIconRes = getNotificationIconRes(context);
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(context.getApplicationInfo().icon)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
-            .setVibrate(new long[] { 0, 250, 250, 250 })
-            .setAutoCancel(true)
-            .setGroup(roomGroupKey(roomId))
-            .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
-            .setOnlyAlertOnce(true)
-            .setContentIntent(pendingIntent)
-            .setDeleteIntent(dismissPendingIntent);
+                .setSmallIcon(notificationIconRes)
+                .setLargeIcon(roomBitmap)
+                .setShortcutId(shortcutId)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(NotificationCompat.DEFAULT_ALL)
+                .setVibrate(new long[]{0, 250, 250, 250})
+                .setAutoCancel(true)
+                .setGroup(groupKeyAllRooms(context))
+                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(pendingIntent)
+                .setDeleteIntent(dismissPendingIntent);
 
         List<MessageRecord> history = roomMessages.get(roomId);
         if (history != null && !history.isEmpty()) {
             Person user = new Person.Builder().setName("Me").build();
 
-            NotificationCompat.MessagingStyle style = new NotificationCompat.MessagingStyle(user).setConversationTitle(convTitle);
+            NotificationCompat.MessagingStyle style = new NotificationCompat.MessagingStyle(user)
+                    .setConversationTitle(convTitle)
+                    .setGroupConversation(true);
 
             MessageRecord lastMsg = null;
             synchronized (history) {
                 for (MessageRecord msg : history) {
-                    Person sender = new Person.Builder().setName(nonEmptyOrDefault(msg.sender, "User")).build();
+                    IconCompat senderIcon = buildSenderIcon(context, msg.avatarSvg, msg.sender);
+                    Person sender = new Person.Builder()
+                            .setName(nonEmptyOrDefault(msg.sender, "User"))
+                            .setKey(msg.senderKey)
+                            .setIcon(senderIcon)
+                            .build();
                     style.addMessage(msg.text, msg.timestamp, sender);
                     lastMsg = msg;
                 }
             }
             builder.setStyle(style);
             if (lastMsg != null) {
-                builder
-                    .setContentTitle(nonEmptyOrDefault(lastMsg.sender, "New Message"))
-                    .setContentText(lastMsg.text)
-                    .setWhen(lastMsg.timestamp);
+                builder.setContentTitle(nonEmptyOrDefault(lastMsg.sender, "New Message"))
+                        .setContentText(lastMsg.text)
+                        .setWhen(lastMsg.timestamp);
             }
         } else {
-            builder.setContentTitle(nonEmptyOrDefault(title, "New Message")).setContentText("You have new messages");
+            builder.setContentTitle(nonEmptyOrDefault(title, "New Message"))
+                    .setContentText("You have new messages");
         }
 
         manager.notify(resolveNotificationId(roomId), builder.build());
-        postRoomSummary(context, manager, roomId, convTitle);
+        postOrCancelGlobalSummary(context, manager);
     }
 
-    private static void postRoomSummary(Context context, NotificationManager manager, int roomId, String convTitle) {
-        List<MessageRecord> history = roomMessages.get(roomId);
-        int msgCount = history != null ? history.size() : 0;
+    private static void postOrCancelGlobalSummary(Context context, NotificationManager manager) {
+        int totalMessages = 0;
+        int totalChats = 0;
+        long latestTimestamp = 0;
 
-        if (msgCount <= 1) {
-            manager.cancel(roomSummaryId(roomId));
+        for (Map.Entry<Integer, List<MessageRecord>> entry : roomMessages.entrySet()) {
+            Integer key = entry.getKey();
+            if (key == null || key <= 0) continue;
+            List<MessageRecord> history = entry.getValue();
+            if (history == null) continue;
+            int roomCount;
+            synchronized (history) {
+                roomCount = history.size();
+                if (roomCount > 0) {
+                    long roomLatest = history.get(roomCount - 1).timestamp;
+                    if (roomLatest > latestTimestamp) {
+                        latestTimestamp = roomLatest;
+                    }
+                }
+            }
+            if (roomCount <= 0) continue;
+            totalChats++;
+            totalMessages += roomCount;
+        }
+
+        if (totalMessages <= 0 || totalChats <= 0) {
+            manager.cancel(GLOBAL_SUMMARY_NOTIFICATION_ID);
             return;
         }
 
-        String summaryText = msgCount + " new messages";
+        String appName = getAppName(context);
+        String summaryTitle = appName + " \u2022 " + totalMessages + " messages";
+        String summaryText = totalChats == 1 ? "1 chat" : totalChats + " chats";
 
-        Notification summaryNotification = new NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle(convTitle)
-            .setContentText(summaryText)
-            .setSmallIcon(context.getApplicationInfo().icon)
-            .setStyle(new NotificationCompat.InboxStyle().setSummaryText(convTitle))
-            .setGroup(roomGroupKey(roomId))
-            .setGroupSummary(true)
-            .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
-            .setSilent(true)
-            .setAutoCancel(true)
-            .build();
+        Intent summaryIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
+        if (summaryIntent != null) {
+            summaryIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        }
+        PendingIntent summaryPendingIntent = PendingIntent.getActivity(
+                context,
+                GLOBAL_SUMMARY_NOTIFICATION_ID,
+                summaryIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
 
-        manager.notify(roomSummaryId(roomId), summaryNotification);
+        int notificationIconRes = getNotificationIconRes(context);
+        NotificationCompat.Builder summaryBuilder = new NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(notificationIconRes)
+                .setContentTitle(summaryTitle)
+                .setContentText(summaryText)
+                .setNumber(totalMessages)
+                .setGroup(groupKeyAllRooms(context))
+                .setGroupSummary(true)
+                .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+                .setSilent(true)
+                .setAutoCancel(true)
+                .setContentIntent(summaryPendingIntent)
+                .setStyle(new NotificationCompat.InboxStyle().setSummaryText(summaryText));
+
+        if (latestTimestamp > 0) summaryBuilder.setWhen(latestTimestamp);
+
+        manager.notify(GLOBAL_SUMMARY_NOTIFICATION_ID, summaryBuilder.build());
     }
 
     static void onNotificationDismissed(Context context, int roomId) {
@@ -416,7 +498,7 @@ final class NotificationHelper {
         roomMessages.remove(roomId);
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
-            manager.cancel(roomSummaryId(roomId));
+            postOrCancelGlobalSummary(context, manager);
         }
     }
 
@@ -438,7 +520,9 @@ final class NotificationHelper {
                         recentMessageIds.add(array.getString(i));
                     }
                 }
-            } catch (JSONException ignored) {}
+            } catch (JSONException e) {
+                Log.w(TAG, "Failed to load recent IDs", e);
+            }
         }
     }
 
@@ -454,7 +538,9 @@ final class NotificationHelper {
                         dismissedMessageIds.add(array.getString(i));
                     }
                 }
-            } catch (JSONException ignored) {}
+            } catch (JSONException e) {
+                Log.w(TAG, "Failed to load dismissed IDs", e);
+            }
         }
     }
 
@@ -476,7 +562,9 @@ final class NotificationHelper {
                     }
                 } catch (NumberFormatException ignored) {}
             }
-        } catch (JSONException ignored) {}
+        } catch (JSONException e) {
+            Log.w(TAG, "Failed to load dismissed cutoff by room", e);
+        }
     }
 
     private static void loadNamesIfEmpty(Context context) {
@@ -497,10 +585,14 @@ final class NotificationHelper {
                 try {
                     int id = Integer.parseInt(strId);
                     String name = object.getString(strId);
-                    if (id > 0 && !TextUtils.isEmpty(name)) targetMap.put(id, name);
+                    if (id > 0 && !TextUtils.isEmpty(name)) {
+                        targetMap.put(id, name);
+                    }
                 } catch (NumberFormatException ignored) {}
             }
-        } catch (JSONException ignored) {}
+        } catch (JSONException e) {
+            Log.w(TAG, "Failed to load map for " + key, e);
+        }
     }
 
     private static void persistMapToPrefs(Context context, String key, Map<Integer, String> map) {
@@ -510,7 +602,15 @@ final class NotificationHelper {
                 object.put(String.valueOf(entry.getKey()), entry.getValue());
             } catch (JSONException ignored) {}
         }
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(key, object.toString()).apply();
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putString(key, object.toString()).apply();
+    }
+
+    private static long getDismissedUntilForRoom(Context context, int roomId) {
+        if (roomId <= 0) return 0L;
+        loadDismissedCutoffByRoomIfEmpty(context);
+        Long value = dismissedUntilByRoom.get(roomId);
+        return value == null ? 0L : value;
     }
 
     private static void addAndPersistMessageId(Context context, String messageId) {
@@ -569,16 +669,15 @@ final class NotificationHelper {
     private static void persistDismissedCutoffByRoom(Context context) {
         JSONObject object = new JSONObject();
         for (Map.Entry<Integer, Long> entry : dismissedUntilByRoom.entrySet()) {
-            if (entry.getKey() == null || entry.getValue() == null || entry.getKey() <= 0 || entry.getValue() <= 0L) continue;
+            Integer roomId = entry.getKey();
+            Long dismissedUntilTs = entry.getValue();
+            if (roomId == null || dismissedUntilTs == null || roomId <= 0 || dismissedUntilTs <= 0L) continue;
             try {
-                object.put(String.valueOf(entry.getKey()), entry.getValue());
+                object.put(String.valueOf(roomId), dismissedUntilTs);
             } catch (JSONException ignored) {}
         }
-        context
-            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_DISMISSED_UNTIL_BY_ROOM, object.toString())
-            .apply();
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putString(KEY_DISMISSED_UNTIL_BY_ROOM, object.toString()).apply();
     }
 
     private static void ensureChannel(NotificationManager manager) {
@@ -604,15 +703,137 @@ final class NotificationHelper {
         return value == null || value.trim().isEmpty() ? fallback : value;
     }
 
+    private static int getNotificationIconRes(Context context) {
+        int resId = context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName());
+        return resId != 0 ? resId : android.R.drawable.ic_dialog_info;
+    }
+
+    private static int getTransparentIconRes(Context context) {
+        int resId = context.getResources().getIdentifier("ic_transparent", "drawable", context.getPackageName());
+        return resId != 0 ? resId : android.R.drawable.ic_dialog_info;
+    }
+
+    private static String getAppName(Context context) {
+        try {
+            return context.getApplicationInfo().loadLabel(context.getPackageManager()).toString();
+        } catch (Exception e) {
+            return context.getPackageName();
+        }
+    }
+
+    private static IconCompat buildSenderIcon(Context context, @Nullable String avatarSvg, @Nullable String senderName) {
+        Log.d(TAG, "buildSenderIcon: attempting to build icon for sender=" + senderName + ", avatarSvg present=" + !TextUtils.isEmpty(avatarSvg));
+        Bitmap avatarBitmap = renderAvatarSvg(avatarSvg);
+        if (avatarBitmap != null) {
+            Log.d(TAG, "buildSenderIcon: using rendered avatar bitmap");
+            return IconCompat.createWithBitmap(avatarBitmap);
+        }
+        Log.d(TAG, "buildSenderIcon: avatar rendering failed or empty, using initials fallback for " + senderName);
+        return IconCompat.createWithBitmap(buildInitialsBitmap(context, senderName));
+    }
+
+    @Nullable
+    private static Bitmap renderAvatarSvg(@Nullable String avatarSvg) {
+        if (TextUtils.isEmpty(avatarSvg)) {
+            return null;
+        }
+        try {
+            SVG svg = SVG.getFromString(avatarSvg);
+            Bitmap bitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            svg.setDocumentHeight(128f);
+            svg.setDocumentWidth(128f);
+            svg.setRenderDPI(96f);
+            svg.renderToCanvas(canvas);
+            return bitmap;
+        } catch (Exception e) {
+            Log.e(TAG, "renderAvatarSvg: failed to render SVG", e);
+            return null;
+        }
+    }
+
+    private static Bitmap buildInitialsBitmap(Context context, @Nullable String senderName) {
+        final int size = 128;
+        String initials = resolveInitials(senderName);
+        int baseColor = resolveColorFromText(senderName);
+
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+
+        Paint bgPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        bgPaint.setColor(baseColor);
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, bgPaint);
+
+        Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        textPaint.setColor(Color.WHITE);
+        textPaint.setTextAlign(Paint.Align.CENTER);
+        textPaint.setTextSize(size * 0.42f);
+        textPaint.setFakeBoldText(true);
+
+        Rect bounds = new Rect();
+        textPaint.getTextBounds(initials, 0, initials.length(), bounds);
+        float baseline = (size / 2f) - bounds.exactCenterY();
+        canvas.drawText(initials, size / 2f, baseline, textPaint);
+
+        return bitmap;
+    }
+
+    private static String resolveInitials(@Nullable String senderName) {
+        if (TextUtils.isEmpty(senderName)) return "?";
+        String trimmed = senderName.trim();
+        if (trimmed.isEmpty()) return "?";
+        String[] parts = trimmed.split("\\s+");
+        if (parts.length >= 2) {
+            String first = parts[0].substring(0, 1);
+            String second = parts[1].substring(0, 1);
+            return (first + second).toUpperCase();
+        }
+        return trimmed.substring(0, 1).toUpperCase();
+    }
+
+    private static int resolveColorFromText(@Nullable String text) {
+        int hash = (text == null) ? 0 : text.hashCode();
+        int r = 80 + Math.abs(hash % 120);
+        int g = 80 + Math.abs((hash / 31) % 120);
+        int b = 80 + Math.abs((hash / 131) % 120);
+        return Color.rgb(r, g, b);
+    }
+
+    static boolean isNotificationActive(Context context, int roomId) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (manager == null) return false;
+            int targetId = resolveNotificationId(roomId);
+            for (StatusBarNotification sbn : manager.getActiveNotifications()) {
+                if (sbn != null && sbn.getId() == targetId) return true;
+            }
+            return false;
+        }
+        List<MessageRecord> history = roomMessages.get(roomId);
+        return history != null && !history.isEmpty();
+    }
+
     static void setRoomName(Context context, int roomId, @Nullable String roomName) {
         if (roomId <= 0 || TextUtils.isEmpty(roomName) || isGenericTitle(roomName)) return;
         roomNamesById.put(roomId, roomName);
         persistMapToPrefs(context, KEY_ROOM_NAMES, roomNamesById);
     }
 
+    @Nullable
+    static String getRoomName(int roomId) {
+        if (roomId <= 0) return null;
+        return roomNamesById.get(roomId);
+    }
+
     static void setUserName(Context context, int userId, @Nullable String userName) {
         if (userId <= 0 || TextUtils.isEmpty(userName) || isGenericTitle(userName)) return;
         userNamesById.put(userId, userName);
         persistMapToPrefs(context, KEY_USER_NAMES, userNamesById);
+    }
+
+    @Nullable
+    static String getUserName(int userId) {
+        if (userId <= 0) return null;
+        return userNamesById.get(userId);
     }
 }

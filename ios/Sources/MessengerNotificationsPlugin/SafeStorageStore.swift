@@ -1,7 +1,7 @@
 import Foundation
 
 public enum SafeStorageStore {
-    private static let rootKey = "messenger_plugin_storage"
+    private static let rootKey = "safe_storage"
 
     public static func getAll() -> [String: String] {
         guard let dict = UserDefaults.standard.dictionary(forKey: rootKey) as? [String: String] else {

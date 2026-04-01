@@ -1,43 +1,96 @@
 package com.codecraft_studio.messenger.notifications;
 
-import android.util.Base64;
-import android.util.Log;
-import androidx.annotation.NonNull;
-import java.nio.charset.StandardCharsets;
+import android.content.Context;
+import android.content.SharedPreferences;
+import com.getcapacitor.JSObject;
 
-/**
- * Native crypto logic picked from ChatE2EE.
- * In a real plugin, this would interface with a security library or the app's keys.
- */
+import org.libsodium.jni.NaCl;
+import org.libsodium.jni.Sodium;
+import java.util.Base64;
+import org.json.JSONObject;
+
 public class NativeCrypto {
+    static { NaCl.sodium(); }
 
-    private static final String TAG = "NativeCrypto";
+    private final Context context;
 
-    public static class DecryptResult {
-
-        public final String text;
-
-        public DecryptResult(String text) {
-            this.text = text;
-        }
+    public NativeCrypto(Context context) {
+        this.context = context;
     }
 
     /**
-     * Placeholder decryption logic.
-     * In the real app, this uses Lipsum or similar.
-     * For the plugin, we assume the host app might provide keys or we just return the ciphertext
-     * if we can't decrypt it yet.
+     * Decrypts data for a specific room by fetching the key from SharedPreferences.
      */
-    public static DecryptResult decryptRoomData(int roomId, @NonNull String encryptedJSON) {
-        // This is a placeholder.
-        // In the original app, it calls a native method or a complex JS bridge.
-        // For the plugin, we'll try to decrypt if we have the keys, otherwise return as-is.
-        Log.d(TAG, "decryptRoomData() roomId=" + roomId);
-        return new DecryptResult(encryptedJSON); // Placeholder
+    public JSObject decryptRoomData(int roomId, String encryptedJSON) throws Exception {
+        String recipientPrivB64 = getRoomPrivateKey(roomId);
+        if (recipientPrivB64 == null) {
+            throw new Exception("No private key found for room ID: " + roomId);
+        }
+        return decryptDataInternal(encryptedJSON, recipientPrivB64);
     }
 
-    public static DecryptResult decryptUserData(int userId, @NonNull String encryptedJSON) {
-        Log.d(TAG, "decryptUserData() userId=" + userId);
-        return new DecryptResult(encryptedJSON); // Placeholder
+    public JSObject decryptUserData(int userId, String encryptedJSON) throws Exception {
+        String recipientPrivB64 = getUserPrivateKey(userId);
+        if (recipientPrivB64 == null) {
+            throw new Exception("No private key found for user ID: " + userId);
+        }
+        return decryptDataInternal(encryptedJSON, recipientPrivB64);
+    }
+
+    private String getRoomPrivateKey(int roomId) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences("safe_storage", Context.MODE_PRIVATE);
+            String keysJSON = prefs.getString("roomDecryptedKeys", null);
+            if (keysJSON == null) return null;
+            JSONObject allKeys = new JSONObject(keysJSON);
+            if (!allKeys.has(String.valueOf(roomId))) return null;
+            JSONObject roomKeyPair = allKeys.getJSONObject(String.valueOf(roomId));
+            return roomKeyPair.optString("privateKey", null);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private String getUserPrivateKey(int userId) {
+        try {
+            SharedPreferences prefs = context.getSharedPreferences("safe_storage", Context.MODE_PRIVATE);
+            String keysJSON = prefs.getString("memberDecryptedKeys", null);
+            if (keysJSON == null) return null;
+            JSONObject allKeys = new JSONObject(keysJSON);
+            if (!allKeys.has(String.valueOf(userId))) return null;
+            JSONObject userKeyPair = allKeys.getJSONObject(String.valueOf(userId));
+            return userKeyPair.optString("privateKey", null);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private JSObject decryptDataInternal(String encryptedJSON, String recipientPrivB64) throws Exception {
+        JSONObject obj = new JSONObject(encryptedJSON);
+        byte[] encrypted = Base64.getDecoder().decode(obj.getString("encryptedMessage"));
+        byte[] nonce = Base64.getDecoder().decode(obj.getString("nonce"));
+        byte[] ephPub = Base64.getDecoder().decode(obj.getString("ephPublicKey"));
+        byte[] recipientPriv = Base64.getDecoder().decode(recipientPrivB64);
+
+        byte[] shared = new byte[32];
+        Sodium.crypto_box_beforenm(shared, ephPub, recipientPriv);
+
+        byte[] decrypted = new byte[encrypted.length - 16];
+        int success = Sodium.crypto_secretbox_open_easy(decrypted, encrypted, encrypted.length, nonce, shared);
+
+        if (success != 0) throw new Exception("Decryption failed");
+
+        JSObject result = new JSObject();
+        result.put("text", new String(decrypted, "UTF-8"));
+        return result;
+    }
+
+    public static JSObject decryptDataStatic(JSObject call) throws Exception {
+        String encryptedJSON = call.getString("encryptedJSON");
+        String recipientPrivB64 = call.getString("recipientPrivateKey");
+        NativeCrypto temp = new NativeCrypto(null);
+        return temp.decryptDataInternal(encryptedJSON, recipientPrivB64);
     }
 }
