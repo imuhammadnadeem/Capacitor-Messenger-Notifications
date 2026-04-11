@@ -45,7 +45,13 @@ public class PersistentSocketService extends Service {
     private static final Set<String> MESSAGE_EVENTS = new HashSet<>(Arrays.asList(
             "sync_messages_response",
             "sync:messages",
+            // "room:new_message",
+            // "room:message",
             "room:message_notification"
+            // "notification:new",
+            // "message:new",
+            // "new_message",
+            // "message"
     ));
 
     private Socket mSocket;
@@ -75,12 +81,14 @@ public class PersistentSocketService extends Service {
         Log.i(TAG, "onCreate()");
         ensureChannel();
         startForeground(NOTIFICATION_ID, buildNotification("Initialising..."));
+        
         setupPrefsListener();
         connectSocket();
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Ensure the service restarts if killed by the system
         return START_STICKY;
     }
 
@@ -205,7 +213,7 @@ public class PersistentSocketService extends Service {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
                     "Persistent Connection",
-                    NotificationManager.IMPORTANCE_MIN
+                    NotificationManager.IMPORTANCE_MIN  // hides status bar icon (Signal-style)
             );
             channel.setDescription("Maintains connection to receive messages when FCM is unavailable");
             channel.setShowBadge(false);

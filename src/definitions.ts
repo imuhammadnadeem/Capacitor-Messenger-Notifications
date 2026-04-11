@@ -50,7 +50,8 @@ export interface MessengerNotificationsPlugin {
   requestPermissions(): Promise<PermissionStatus>;
 
   /**
-   * Registers the FCM token with the backend server.
+   * Registers push credentials with your backend using `safe_storage` (JWT + base URL required).
+   * Android: FCM only. iOS: FCM (`/api/users/fcm-token`) and/or OneSignal (`/api/push/register`) when both are stored.
    */
   registerFcmToken(): Promise<void>;
 }

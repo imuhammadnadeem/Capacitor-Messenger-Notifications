@@ -15,7 +15,7 @@ Capacitor plugin for managing messenger-style notifications with WebSocket suppo
   - [Clear a Room's Notifications](#clear-a-rooms-notifications)
   - [Cold-Start Navigation](#cold-start-navigation)
   - [Persistent Socket (Android)](#persistent-socket-android)
-  - [FCM Token Registration](#fcm-token-registration)
+  - [Push token / OneSignal registration](#push-token--onesignal-registration)
   - [Native Integration](#native-integration)
 - [Setup by Platform](#setup-by-platform)
   - [Android](#android)
@@ -42,7 +42,9 @@ Capacitor plugin for managing messenger-style notifications with WebSocket suppo
 - **Notification Deduplication**: In-memory + persisted message ID tracking prevents showing the same message twice across socket and FCM paths.
 - **Dynamic Resources**: All icon, app name, and notification group key lookups are resolved from the host app at runtime — no hardcoded app-specific values.
 - **`window.Notification` Polyfill (Android)**: Injects a polyfill into the WebView so the JS app's `new Notification(...)` calls route through the native plugin.
-- **FCM Token Registration**: Registers the device's FCM push token with your backend API automatically after login.
+- **Push registration**: **Android** — registers the FCM token via `POST …/api/users/fcm-token` (or your `fcmTokenEndpoint` override). **iOS** — can register **both**: FCM token to the same endpoint when `fcmToken` is in `safe_storage` (e.g. from Firebase), and the OneSignal subscription id via `POST …/api/push/register` when `onesignalPlayerId` is set (`FcmTokenRegistrar.updateOneSignalPlayerId(_:)` / `updateFcmToken(_:)`).
+- **Message flow logging (optional)**: **Android** — `MessageFlowLogger` POSTs structured steps to `{backend}/api/message-flow-logs/ingest`. **iOS** — `MessageFlowLogger` in the plugin sends the same style of events over HTTPS.
+- **App Group storage (iOS)**: `SafeStorageStore` can mirror `safe_storage` into a shared App Group when you set the `MessengerNotificationsAppGroup` key in Info.plist (for extensions / NSE).
 
 ---
 
@@ -106,7 +108,7 @@ await MessengerNotifications.clearRoomNotification({ roomId: 101 });
 
 ### Cold-Start Navigation
 
-When the user taps a notification to open the app, retrieve the room to navigate to:
+Notification tap intents include a `roomId` extra on Android. The plugin exposes `getPendingRoomId()` for JS; on **Android** you should also forward the launch intent room into native storage if you use a custom activity, e.g. `NotificationHelper.setPendingRoomId(roomId)` when handling `onNewIntent` / `onCreate`. On **iOS**, set `MessengerNotificationsPlugin.pendingRoomId = roomId` from your `AppDelegate` / OneSignal click handler when the user opens a chat from a notification.
 
 ```typescript
 const { roomId } = await MessengerNotifications.getPendingRoomId();
@@ -131,15 +133,16 @@ await MessengerNotifications.stopPersistentSocket();
 
 > On GMS devices the socket is only opened for the duration of each incoming FCM push. `startPersistentSocket` stores the credentials but does not start the service.
 
-### FCM Token Registration
+### Push token / OneSignal registration
 
-After the user logs in, trigger FCM token registration with your backend:
+After the user logs in, call:
 
 ```typescript
 await MessengerNotifications.registerFcmToken();
 ```
 
-The plugin reads the FCM token and JWT from `safe_storage` (SharedPreferences / UserDefaults) and POSTs to `{backendBaseUrl}/api/users/fcm-token`. Registration is skipped automatically if it has already succeeded.
+- **Android**: Reads `fcmToken`, JWT, and backend URL from `safe_storage`, then `POST {base}/api/users/fcm-token` with `{ "fcmToken": "..." }` (or your `fcmTokenEndpoint` override). Skips when `fcmTokenRegistered` is already true.
+- **iOS**: Runs **both** registrations when the prerequisites exist (each is independent). **FCM**: `fcmToken` + JWT + base URL → `POST {base}/api/users/fcm-token` (or `fcmTokenEndpoint`); skips when `fcmTokenRegistered` is true. **OneSignal**: `onesignalPlayerId` + JWT + base URL → `POST {base}/api/push/register` with `{ "playerId": "...", "platform": "ios" }`; skips when `onesignalPlayerIdRegistered` is true. From Swift use `FcmTokenRegistrar.updateFcmToken(_:)` / `updateOneSignalPlayerId(_:)` when tokens change.
 
 ### Native Integration
 
@@ -174,6 +177,8 @@ The plugin reads credentials from `SharedPreferences` file `"safe_storage"`. You
 | `socketUrl` | WebSocket server URL |
 | `backendBaseUrl` / `serverUrl` / ... | HTTP base URL for the unread messages API |
 | `fcmToken` | FCM registration token (written by Firebase) |
+| `fcmTokenRegistered` | Set by the plugin to true after a successful `POST` to the FCM endpoint |
+| `fcmTokenEndpoint` | Optional path override (default `/api/users/fcm-token`) |
 | `roomDecryptedKeys` | JSON map of room E2EE private keys |
 | `memberDecryptedKeys` | JSON map of member E2EE private keys |
 
@@ -220,9 +225,20 @@ In Xcode, enable the following for your app target:
 - **Push Notifications**
 - **Background Modes** → check *Remote notifications* and *Background fetch*
 
-#### 2. AppDelegate
+#### 2. Info.plist (App Group, optional)
 
-Forward remote notifications to the plugin:
+If you use a Notification Service Extension or shared storage with the main app, set your App Group identifier:
+
+```xml
+<key>MessengerNotificationsAppGroup</key>
+<string>group.your.bundle.app</string>
+```
+
+If omitted, the plugin uses only `UserDefaults.standard` for the `safe_storage` dictionary.
+
+#### 3. AppDelegate
+
+Forward remote notifications to the plugin when you handle data/silent payloads. When the user taps a notification and you know the `roomId`, assign `MessengerNotificationsPlugin.pendingRoomId = roomId` so JavaScript can read it via `getPendingRoomId()`.
 
 ```swift
 import UIKit
@@ -243,16 +259,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 ```
 
-#### 3. Safe Storage Keys
+#### 4. Safe Storage Keys
 
-The plugin reads from `UserDefaults` suite `"safe_storage"`. Write the following keys from your JS app:
+The plugin reads from `UserDefaults` suite `"safe_storage"` (and mirrors to the App Group suite when configured). Write the following keys from your JS app:
 
 | Key | Description |
 | --- | --- |
 | `token` / `authToken` | User's JWT |
 | `socketUrl` | WebSocket server URL |
 | `backendBaseUrl` / `serverUrl` / ... | HTTP base URL |
-| `fcmToken` | APNs/FCM token |
+| `onesignalPlayerId` / `onesignalSubscriptionId` | OneSignal subscription id (`POST /api/push/register`) |
+| `onesignalPlayerIdRegistered` | `"true"` after OneSignal id is ACKed by your backend (plugin sets this) |
+| `fcmToken` | FCM registration token from Firebase (optional; `POST /api/users/fcm-token` same as Android) |
+| `fcmTokenRegistered` | `"true"` after FCM token is ACKed (plugin sets this) |
+| `fcmTokenEndpoint` | Optional path override for FCM registration (default `/api/users/fcm-token`) |
 | `roomDecryptedKeys` | JSON map of room E2EE private keys |
 | `memberDecryptedKeys` | JSON map of member E2EE private keys |
 
@@ -365,7 +385,7 @@ Prompts the user for notification permission.
 
 ### `registerFcmToken()`
 
-Triggers registration of the device's FCM/APNs token with the backend server. Reads `fcmToken`, JWT, and backend URL from `safe_storage`. No-ops if already registered or if prerequisites are missing.
+**Android**: Registers `fcmToken` with `{base}/api/users/fcm-token` (or `fcmTokenEndpoint`). **iOS**: Registers **FCM** (`fcmToken` → same endpoint/shape as Android) and **OneSignal** (`onesignalPlayerId` → `{base}/api/push/register`) when each is present and not yet marked registered. Reads JWT and backend URL from `safe_storage`.
 
 ---
 

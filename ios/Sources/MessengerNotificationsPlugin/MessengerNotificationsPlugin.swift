@@ -1,5 +1,6 @@
 import Foundation
 import Capacitor
+import UserNotifications
 
 @objc(MessengerNotificationsPlugin)
 public class MessengerNotificationsPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -16,11 +17,8 @@ public class MessengerNotificationsPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "registerFcmToken", returnType: CAPPluginReturnPromise)
     ]
 
-    private static var _pendingRoomId: Int? = nil
-    public static var pendingRoomId: Int? {
-        get { return _pendingRoomId }
-        set { _pendingRoomId = newValue }
-    }
+    /// Set from native notification tap handling (e.g. AppDelegate) so JS can read via `getPendingRoomId`.
+    public static var pendingRoomId: Int?
 
     @objc func showNotification(_ call: CAPPluginCall) {
         let title = call.getString("title") ?? "New Message"
@@ -28,9 +26,8 @@ public class MessengerNotificationsPlugin: CAPPlugin, CAPBridgedPlugin {
         let roomId = call.getInt("roomId") ?? 0
         let messageId = call.getString("messageId")
         let timestamp = call.getInt("timestamp") ?? 0
-        let roomName = call.getString("roomName")
 
-        NotificationHelper.showRoomNotification(
+        _ = NotificationHelper.showRoomNotification(
             title: title,
             body: body,
             roomId: roomId,

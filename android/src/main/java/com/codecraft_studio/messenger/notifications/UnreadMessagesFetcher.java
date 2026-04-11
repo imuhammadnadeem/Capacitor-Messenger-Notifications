@@ -64,6 +64,20 @@ final class UnreadMessagesFetcher {
             return false;
         }
 
+        MessageFlowLogger.log(
+            context,
+            "android-unread-" + System.currentTimeMillis(),
+            null,
+            null,
+            null,
+            "android_unread_fetch_started",
+            "Android started unread API fetch",
+            "api",
+            "start",
+            null,
+            null
+        );
+
         HttpURLConnection connection = null;
         try {
             connection = (HttpURLConnection) new URL(unreadUrl).openConnection();
@@ -88,8 +102,37 @@ final class UnreadMessagesFetcher {
             JSONObject jsonResponse = new JSONObject(response);
             JSONArray messages = jsonResponse.optJSONArray("messages");
             if (messages == null) {
+                MessageFlowLogger.log(
+                    context,
+                    "android-unread-" + System.currentTimeMillis(),
+                    null,
+                    null,
+                    null,
+                    "android_unread_fetch_completed",
+                    "Android unread API completed with 0 messages",
+                    "api",
+                    "success",
+                    null,
+                    null
+                );
                 return true;
             }
+
+                JSONObject p = new JSONObject();
+                p.put("message_count", messages.length());
+                MessageFlowLogger.log(
+                    context,
+                    "android-unread-" + System.currentTimeMillis(),
+                    null,
+                    null,
+                    null,
+                    "android_unread_fetch_completed",
+                    "Android unread API completed",
+                    "api",
+                    "success",
+                    p,
+                    null
+                );
 
             for (int i = 0; i < messages.length(); i++) {
                 JSONObject item = messages.optJSONObject(i);
@@ -141,6 +184,7 @@ final class UnreadMessagesFetcher {
             }
         }
 
+        // Final fallback: hard-coded default base URL
         return joinUrl(DEFAULT_BASE_URL, "/api/rooms/messages/unread");
     }
 

@@ -24,8 +24,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Fetch coordinator: keeps services alive while fetches run, limits to ONE active fetch
- * at a time to prevent socket transport error conflicts.
+ * Signal-inspired fetch coordinator:
+ * - keeps services alive while fetches run
+ * - limits to ONE active fetch at a time to prevent socket "transport error" conflicts
+ * - posts a fallback "may have messages" notification on repeated failures
  */
 public final class FcmFetchManager {
 
@@ -34,7 +36,8 @@ public final class FcmFetchManager {
 
     public static final long WEBSOCKET_DRAIN_TIMEOUT_MS = 2 * 60 * 1000L;
 
-    private static final int MAX_ACTIVE_FETCHES = 1;
+    // Use 1 to prevent multiple parallel socket connections which cause "transport error"
+    private static final int MAX_ACTIVE_FETCHES = 1; 
     private static final int MAY_HAVE_MESSAGES_NOTIFICATION_ID = 91002;
     private static final String MAY_HAVE_MESSAGES_CHANNEL_ID = "fcm_may_have_messages";
 
@@ -42,11 +45,14 @@ public final class FcmFetchManager {
     private static boolean highPriorityContext = false;
     private static Map<String, String> latestPayloadData = Collections.emptyMap();
 
+    // Tracks when a notification was last shown per room ID.
+    // Used to suppress the native fallback and avoid duplicate/overwriting notifications.
     private static final Map<Integer, Long> lastRoomNotificationMs = new ConcurrentHashMap<>();
     private static final long NOTIFICATION_GRACE_MS = 10_000L;
     private static volatile long lastAnyNotificationMs = 0L;
 
-    private FcmFetchManager() {}
+    private FcmFetchManager() {
+    }
 
     public static synchronized boolean isFetchActive() {
         return activeCount > 0;
@@ -66,6 +72,7 @@ public final class FcmFetchManager {
         cancelMayHaveMessagesNotification(context);
     }
 
+    /** Called when a notification is shown (either via WebView or Native socket). */
     public static void markNotificationShown(int roomId) {
         Log.d(TAG, "Marking notification shown for room: " + roomId);
         long now = System.currentTimeMillis();
@@ -73,15 +80,19 @@ public final class FcmFetchManager {
         lastAnyNotificationMs = now;
     }
 
+    /** Returns true if a notification was shown for this room within the grace window. */
     public static boolean wasNotificationShownRecently(int roomId) {
         Long last = lastRoomNotificationMs.get(roomId);
         if (last == null) return false;
         return (System.currentTimeMillis() - last) < NOTIFICATION_GRACE_MS;
     }
 
+    /** Returns true if any notification was shown within the given window. */
     public static boolean wasAnyNotificationShownRecently(long windowMs) {
         long last = lastAnyNotificationMs;
-        if (last <= 0L) return false;
+        if (last <= 0L) {
+            return false;
+        }
         return (System.currentTimeMillis() - last) < Math.max(0L, windowMs);
     }
 
@@ -90,6 +101,15 @@ public final class FcmFetchManager {
                 + " payloadKeys=" + (payloadData == null ? 0 : payloadData.size()));
         final Context appContext = context.getApplicationContext();
         synchronized (FcmFetchManager.class) {
+            // if (shouldSkipRedundantFetch(payloadData)) {
+            //     int roomId = parseInt(firstNonEmpty(
+            //             payloadData != null ? payloadData.get("roomId") : null,
+            //             payloadData != null ? payloadData.get("room_id") : null
+            //     ), 0);
+            //     Log.i(TAG, "Skipping native fetch: notification already shown recently for roomId=" + roomId);
+            //     return;
+            // }
+
             if (highPriority) {
                 highPriorityContext = true;
             }
@@ -110,6 +130,18 @@ public final class FcmFetchManager {
         EXECUTOR.execute(() -> fetch(appContext));
     }
 
+    private static boolean shouldSkipRedundantFetch(Map<String, String> payloadData) {
+        if (payloadData == null || payloadData.isEmpty()) {
+            return false;
+        }
+        int roomId = parseInt(firstNonEmpty(payloadData.get("roomId"), payloadData.get("room_id")), 0);
+        if (roomId > 0 && wasNotificationShownRecently(roomId)) {
+            return true;
+        }
+        // Conservative fallback for room-less pushes: only skip when any notification fired very recently.
+        return roomId <= 0 && wasAnyNotificationShownRecently(3_000L);
+    }
+
     public static boolean retrieveMessages(Context context, Map<String, String> payloadData) {
         Log.i(TAG, "[ENTRY][FCM_FETCH_MANAGER] retrieveMessages() -> socket first");
         boolean success = TemporarySocketSessionManager.runSession(context, payloadData);
@@ -119,6 +151,8 @@ public final class FcmFetchManager {
                 roomId = parseInt(firstNonEmpty(payloadData.get("roomId"), payloadData.get("room_id")), 0);
             }
 
+            // If we recently showed a notification for this room (or generic),
+            // skip the native fallback to prevent overwriting the decrypted one.
             if (wasNotificationShownRecently(roomId) || (roomId > 0 && wasNotificationShownRecently(0))) {
                 Log.i(TAG, "Socket idle or failed but notification was shown recently - skipping fallback.");
                 return true;
@@ -208,7 +242,9 @@ public final class FcmFetchManager {
                 .setOnlyAlertOnce(true)
                 .setAutoCancel(true);
 
-        if (pendingIntent != null) builder.setContentIntent(pendingIntent);
+        if (pendingIntent != null) {
+            builder.setContentIntent(pendingIntent);
+        }
 
         NotificationManagerCompat.from(context).notify(MAY_HAVE_MESSAGES_NOTIFICATION_ID, builder.build());
     }

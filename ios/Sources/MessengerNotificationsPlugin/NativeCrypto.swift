@@ -1,9 +1,9 @@
 import Foundation
 import Sodium
 
-public enum NativeCrypto {
-    public struct DecryptionResult {
-        public let text: String
+enum NativeCrypto {
+    struct DecryptionResult {
+        let text: String
     }
 
     private static func roomPrivateKey(roomId: Int) -> String? {
@@ -32,14 +32,14 @@ public enum NativeCrypto {
         return priv
     }
 
-    public static func decryptRoomData(roomId: Int, encryptedJSON: String) throws -> DecryptionResult {
+    static func decryptRoomData(roomId: Int, encryptedJSON: String) throws -> DecryptionResult {
         guard let priv = roomPrivateKey(roomId: roomId) else {
             throw NSError(domain: "NativeCrypto", code: 1, userInfo: [NSLocalizedDescriptionKey: "No private key for room \(roomId)"])
         }
         return try decryptInternal(encryptedJSON: encryptedJSON, recipientPrivB64: priv)
     }
 
-    public static func decryptUserData(userId: Int, encryptedJSON: String) throws -> DecryptionResult {
+    static func decryptUserData(userId: Int, encryptedJSON: String) throws -> DecryptionResult {
         guard let priv = userPrivateKey(userId: userId) else {
             throw NSError(domain: "NativeCrypto", code: 2, userInfo: [NSLocalizedDescriptionKey: "No private key for user \(userId)"])
         }
@@ -78,3 +78,4 @@ public enum NativeCrypto {
         return DecryptionResult(text: text)
     }
 }
+

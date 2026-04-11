@@ -17,10 +17,43 @@ public enum UnreadMessagesFetcher {
     private static let log = OSLog(subsystem: Bundle.main.bundleIdentifier ?? "com.codecraft_studio.messenger.notifications",
                                    category: "Notifications")
 
+    private static func currentTimestampMs() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private static func logDetailedFlow(
+        traceId: String,
+        messageId: String? = nil,
+        roomId: Int? = nil,
+        userId: Int? = nil,
+        stepKey: String,
+        stepMessage: String,
+        channel: String,
+        status: String = "info",
+        payload: [String: Any] = [:],
+        error: String? = nil
+    ) {
+        var fullPayload = payload
+        fullPayload["timestamp_ms"] = currentTimestampMs()
+        MessageFlowLogger.log(
+            traceId: traceId,
+            messageId: messageId,
+            roomId: roomId,
+            userId: userId,
+            stepKey: stepKey,
+            stepMessage: stepMessage,
+            channel: channel,
+            status: status,
+            payload: fullPayload,
+            error: error
+        )
+    }
+
     public static func fetchAndNotify(
         payloadData: [String: Any]?,
         completion: @escaping (Bool) -> Void
     ) {
+        let fetchTraceId = "ios-unread-\(currentTimestampMs())"
         guard let token = firstNonEmpty(
             SafeStorageStore.get("token"),
             SafeStorageStore.get("authToken")
@@ -29,6 +62,13 @@ public enum UnreadMessagesFetcher {
             os_log("🔔 [UnreadMessagesFetcher] No auth token in safe storage.",
                    log: log,
                    type: .error)
+            logDetailedFlow(
+                traceId: fetchTraceId,
+                stepKey: "ios_unread_auth_missing",
+                stepMessage: "Unread API flow stopped because no auth token was found in secure storage.",
+                channel: "api",
+                status: "error"
+            )
             completion(false)
             return
         }
@@ -41,6 +81,14 @@ public enum UnreadMessagesFetcher {
                    log: log,
                    type: .error,
                    payloadDescription)
+            logDetailedFlow(
+                traceId: fetchTraceId,
+                stepKey: "ios_unread_url_missing",
+                stepMessage: "Unread API flow stopped because no valid unread endpoint URL could be resolved from payload or saved config.",
+                channel: "api",
+                status: "error",
+                payload: ["payload_preview": String(payloadDescription.prefix(220))]
+            )
             completion(false)
             return
         }
@@ -50,6 +98,25 @@ public enum UnreadMessagesFetcher {
                log: log,
                type: .info,
                unreadUrlString)
+        MessageFlowLogger.log(
+            traceId: fetchTraceId,
+            stepKey: "ios_unread_fetch_started",
+            stepMessage: "iOS started unread API fetch",
+            channel: "api",
+            status: "start",
+            payload: [
+                "url": unreadUrlString,
+                "timestamp_ms": currentTimestampMs()
+            ]
+        )
+        logDetailedFlow(
+            traceId: fetchTraceId,
+            stepKey: "ios_unread_fetch_request_prepared",
+            stepMessage: "Unread API request is prepared with Bearer auth and is about to be sent to fetch unread encrypted messages.",
+            channel: "api",
+            status: "start",
+            payload: ["url": unreadUrlString]
+        )
 
         var request = URLRequest(url: unreadUrl, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData, timeoutInterval: connectTimeout + readTimeout)
         request.httpMethod = "GET"
@@ -64,6 +131,14 @@ public enum UnreadMessagesFetcher {
                        log: log,
                        type: .error,
                        error.localizedDescription)
+                logDetailedFlow(
+                    traceId: fetchTraceId,
+                    stepKey: "ios_unread_network_error",
+                    stepMessage: "Unread API request failed due to a network or transport-level error before a successful response was received.",
+                    channel: "api",
+                    status: "error",
+                    error: error.localizedDescription
+                )
                 completion(false)
                 return
             }
@@ -76,6 +151,14 @@ public enum UnreadMessagesFetcher {
                        type: .error,
                        http.statusCode,
                        body)
+                logDetailedFlow(
+                    traceId: fetchTraceId,
+                    stepKey: "ios_unread_http_error",
+                    stepMessage: "Unread API returned a non-200 HTTP status, so unread message extraction was aborted.",
+                    channel: "api",
+                    status: "error",
+                    payload: ["http_status": http.statusCode, "body_preview": String(body.prefix(200))]
+                )
                 completion(false)
                 return
             }
@@ -85,11 +168,19 @@ public enum UnreadMessagesFetcher {
                 os_log("🔔 [UnreadMessagesFetcher] Empty unread response (treated as success).",
                        log: log,
                        type: .info)
+                logDetailedFlow(
+                    traceId: fetchTraceId,
+                    stepKey: "ios_unread_empty_response",
+                    stepMessage: "Unread API returned an empty response and this is treated as a successful no-op with no new notifications.",
+                    channel: "api",
+                    status: "success"
+                )
                 completion(true)
                 return
             }
 
             do {
+                // Log raw response for debugging (truncate to avoid huge logs)
                 let rawBody = String(data: data, encoding: .utf8) ?? ""
                 let maxLogChars = 900
                 let prefix = rawBody.prefix(maxLogChars)
@@ -109,10 +200,38 @@ public enum UnreadMessagesFetcher {
                        type: .info,
                        messages.count,
                        Date().timeIntervalSince(start))
+                MessageFlowLogger.log(
+                    traceId: fetchTraceId,
+                    stepKey: "ios_unread_fetch_completed",
+                    stepMessage: "iOS unread API fetch completed with \(messages.count) messages",
+                    channel: "api",
+                    status: "success",
+                    payload: [
+                        "message_count": messages.count,
+                        "timestamp_ms": currentTimestampMs()
+                    ]
+                )
+                logDetailedFlow(
+                    traceId: fetchTraceId,
+                    stepKey: "ios_unread_records_processing_started",
+                    stepMessage: "Unread API returned records and the app is now decrypting each unread message and scheduling local notifications.",
+                    channel: "api",
+                    status: "start",
+                    payload: ["message_count": messages.count]
+                )
 
                 for item in messages {
                     notifyFromUnreadRecord(item)
                 }
+
+                logDetailedFlow(
+                    traceId: fetchTraceId,
+                    stepKey: "ios_unread_records_processing_completed",
+                    stepMessage: "Unread message processing completed and notification scheduling calls were issued for each valid unread message.",
+                    channel: "api",
+                    status: "success",
+                    payload: ["message_count": messages.count]
+                )
 
                 completion(true)
             } catch {
@@ -121,6 +240,14 @@ public enum UnreadMessagesFetcher {
                        log: log,
                        type: .error,
                        error.localizedDescription)
+                logDetailedFlow(
+                    traceId: fetchTraceId,
+                    stepKey: "ios_unread_parse_error",
+                    stepMessage: "Unread API response could not be parsed as expected JSON, so unread notifications could not be produced from this response.",
+                    channel: "api",
+                    status: "error",
+                    error: error.localizedDescription
+                )
                 completion(false)
             }
         }
@@ -133,6 +260,10 @@ public enum UnreadMessagesFetcher {
                 payloadData["unread_url"] as? String,
                 payloadData["unreadUrl"] as? String
             ) {
+                print("🔔 [UnreadMessagesFetcher] resolveUnreadUrl: using explicit unread URL from payload.")
+                os_log("🔔 [UnreadMessagesFetcher] resolveUnreadUrl: using explicit unread URL from payload.",
+                       log: log,
+                       type: .info)
                 return explicit
             }
 
@@ -144,17 +275,40 @@ public enum UnreadMessagesFetcher {
                 payloadData["api_base_url"] as? String,
                 payloadData["apiBaseUrl"] as? String
             ) {
-                return joinUrl(baseFromPayload, path: "/api/rooms/messages/unread")
+                let url = joinUrl(baseFromPayload, path: "/api/rooms/messages/unread")
+                print("🔔 [UnreadMessagesFetcher] resolveUnreadUrl: using base URL from payload='\(baseFromPayload)' -> '\(url)'")
+                os_log("🔔 [UnreadMessagesFetcher] resolveUnreadUrl: base from payload=%{public}@ -> %{public}@",
+                       log: log,
+                       type: .info,
+                       baseFromPayload,
+                       url)
+                return url
             }
         }
 
         for key in baseUrlKeys {
             if let value = SafeStorageStore.get(key), !value.isEmpty {
-                return joinUrl(value, path: "/api/rooms/messages/unread")
+                let url = joinUrl(value, path: "/api/rooms/messages/unread")
+                print("🔔 [UnreadMessagesFetcher] resolveUnreadUrl: using base URL from safe storage key '\(key)'='\(value)' -> '\(url)'")
+                os_log("🔔 [UnreadMessagesFetcher] resolveUnreadUrl: base from storage key=%{public}@ value=%{public}@ -> %{public}@",
+                       log: log,
+                       type: .info,
+                       key,
+                       value,
+                       url)
+                return url
             }
         }
 
-        return joinUrl(defaultBaseUrl, path: "/api/rooms/messages/unread")
+        // Final fallback: hard-coded default base URL
+        let fallbackUrl = joinUrl(defaultBaseUrl, path: "/api/rooms/messages/unread")
+        print("🔔 [UnreadMessagesFetcher] resolveUnreadUrl: using default base URL '\(defaultBaseUrl)' -> '\(fallbackUrl)'")
+        os_log("🔔 [UnreadMessagesFetcher] resolveUnreadUrl: using default base URL=%{public}@ -> %{public}@",
+               log: log,
+               type: .info,
+               defaultBaseUrl,
+               fallbackUrl)
+        return fallbackUrl
     }
 
     private static func joinUrl(_ baseUrl: String, path: String) -> String {
@@ -177,13 +331,15 @@ public enum UnreadMessagesFetcher {
         return value.count > 80 && value.range(of: "^[A-Za-z0-9+/=._-]+$", options: .regularExpression) != nil
     }
 
-    private static func notifyFromUnreadRecord(_ item: [String: Any]) {
+    @discardableResult
+    public static func notifyFromUnreadRecord(_ item: [String: Any]) -> Bool {
         let roomId = (item["roomId"] as? Int)
             ?? (item["room_id"] as? Int)
             ?? (item["roomID"] as? Int)
             ?? 0
 
         let messageId = NotificationHelper.coerceMessageId(from: item) ?? ""
+        let traceId = messageId.isEmpty ? "ios-unread-record-\(currentTimestampMs())" : "msg-\(messageId)"
 
         let senderId: Int = {
             if let id = item["sender_id"] as? Int { return id }
@@ -198,6 +354,7 @@ public enum UnreadMessagesFetcher {
             ?? (item["sender"] as? String)
             ?? ""
 
+        // Unread API may include encrypted username / room name (encrypted JSON strings).
         let encryptedRoomName = (item["encrypted_room_name"] as? String)
             ?? (item["encryptedRoomName"] as? String)
         let encryptedUsername = (item["encrypted_username"] as? String)
@@ -216,7 +373,19 @@ public enum UnreadMessagesFetcher {
                    enc.count,
                    senderId)
         }
+        logDetailedFlow(
+            traceId: traceId,
+            messageId: messageId.isEmpty ? nil : messageId,
+            roomId: roomId,
+            userId: senderId > 0 ? senderId : nil,
+            stepKey: "ios_unread_record_received",
+            stepMessage: "A single unread record was received and normalization/decryption has started for title, room name, username, and body text.",
+            channel: "notification",
+            status: "start",
+            payload: ["has_encrypted_room": encryptedRoomName != nil, "has_encrypted_user": encryptedUsername != nil]
+        )
 
+        // Decrypt room name + username for kill/background parity with socket notifications.
         let decryptedRoomName: String? = {
             guard roomId > 0 else { return nil }
             guard let enc = encryptedRoomName,
@@ -259,6 +428,8 @@ public enum UnreadMessagesFetcher {
             }
         }()
 
+        // Match iOS formatting used by the JS/socket path: "Sender in RoomName".
+        // NotificationHelper parses " in " to set `subtitle` as room name.
         let resolvedSender = decryptedUsername ?? (senderName.isEmpty ? "New message" : senderName)
         let title: String
         if let room = decryptedRoomName, !room.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -317,22 +488,10 @@ public enum UnreadMessagesFetcher {
         }
 
         let timestampMillis: Int64 = {
-            if let ts = item["timestamp"] as? Int64 {
-                return ts
-            }
-            if let ts = item["timestamp"] as? Int {
-                return Int64(ts)
-            }
-            if let ts = item["created_at"] as? Int64 {
-                return ts
-            }
-            if let ts = item["created_at"] as? Int {
-                return Int64(ts)
-            }
             return Int64(Date().timeIntervalSince1970 * 1000)
         }()
 
-        NotificationHelper.showRoomNotification(
+        let didShow = NotificationHelper.showRoomNotification(
             title: title,
             body: body,
             roomId: roomId,
@@ -340,5 +499,46 @@ public enum UnreadMessagesFetcher {
             timestamp: timestampMillis,
             isSync: false
         )
+        if didShow {
+            MessageFlowLogger.log(
+                traceId: traceId,
+                messageId: messageId.isEmpty ? nil : messageId,
+                roomId: roomId,
+                userId: senderId > 0 ? senderId : nil,
+                stepKey: "ios_notification_from_unread",
+                stepMessage: "iOS showed notification from unread sync message",
+                channel: "notification",
+                status: "success",
+                payload: [
+                    "title": title,
+                    "body_preview": String(body.prefix(120)),
+                    "timestamp_ms": currentTimestampMs()
+                ]
+            )
+            logDetailedFlow(
+                traceId: traceId,
+                messageId: messageId.isEmpty ? nil : messageId,
+                roomId: roomId,
+                userId: senderId > 0 ? senderId : nil,
+                stepKey: "ios_unread_record_notification_scheduled",
+                stepMessage: "Unread record processing finished and a detailed local notification request was sent to the notification helper.",
+                channel: "notification",
+                status: "success",
+                payload: ["title": title, "body_preview": String(body.prefix(120))]
+            )
+        } else {
+            logDetailedFlow(
+                traceId: traceId,
+                messageId: messageId.isEmpty ? nil : messageId,
+                roomId: roomId,
+                userId: senderId > 0 ? senderId : nil,
+                stepKey: "ios_unread_record_notification_suppressed",
+                stepMessage: "Unread record was parsed but did not produce a new notification because it was deduped or suppressed by room state.",
+                channel: "notification",
+                status: "info"
+            )
+        }
+        return didShow
     }
 }
+

@@ -57,26 +57,42 @@ final class NotificationHelper {
     private static final int MAX_DISMISSED_IDS = 500;
     static final String EXTRA_ROOM_ID = "extra_room_id";
 
+    // In-memory message history for MessagingStyle.
     private static final Map<Integer, List<MessageRecord>> roomMessages = new ConcurrentHashMap<>();
+
+    // Persisted name caches
     private static final Map<Integer, String> roomNamesById = new ConcurrentHashMap<>();
     private static final Map<Integer, String> userNamesById = new ConcurrentHashMap<>();
 
     private static final int MAX_MESSAGES_PER_ROOM = 50;
 
+    // Persistent de-duplication cache. Using LinkedHashSet to maintain insertion order for LRU eviction.
     private static final Set<String> recentMessageIds = Collections.synchronizedSet(new LinkedHashSet<>());
     private static final Set<String> dismissedMessageIds = Collections.synchronizedSet(new LinkedHashSet<>());
     private static final Map<Integer, Long> dismissedUntilByRoom = new ConcurrentHashMap<>();
 
+    // Track server clock skew to align local events with server timestamps.
     private static volatile long serverTimeOffset = 0L;
     private static final Object offsetLock = new Object();
 
-    // Pending room ID for cold-start navigation
     private static volatile Integer pendingRoomId = null;
+
+    static void setPendingRoomId(int roomId) {
+        pendingRoomId = roomId > 0 ? roomId : null;
+    }
+
+    static Integer getPendingRoomId() {
+        return pendingRoomId;
+    }
+
+    static void consumePendingRoomId() {
+        pendingRoomId = null;
+    }
 
     static class MessageRecord {
         @Nullable final String id;
-        final String sender;
-        final String senderKey;
+        final String sender;    // display name shown in the notification
+        final String senderKey; // identity key for deduplication (senderId if known, else display name)
         @Nullable final String avatarSvg;
         final String text;
         final long timestamp;
@@ -104,18 +120,9 @@ final class NotificationHelper {
 
     private NotificationHelper() {}
 
-    static void setPendingRoomId(int roomId) {
-        pendingRoomId = roomId > 0 ? roomId : null;
-    }
-
-    static Integer getPendingRoomId() {
-        return pendingRoomId;
-    }
-
-    static void consumePendingRoomId() {
-        pendingRoomId = null;
-    }
-
+    /**
+     * Clears in-memory history. If cancelNotification is true, also removes it from the status bar.
+     */
     static void clearRoomHistory(Context context, int roomId, boolean cancelNotification) {
         Log.d(TAG, "clearRoomHistory() roomId=" + roomId + " cancel=" + cancelNotification);
         roomMessages.remove(roomId);
@@ -128,6 +135,9 @@ final class NotificationHelper {
         }
     }
 
+    /**
+     * Public entry points to show a notification immediately.
+     */
     static void showRoomNotification(Context context, String title, String body, int roomId, @Nullable String messageId, long timestamp) {
         showRoomNotification(context, title, body, roomId, 0, messageId, timestamp, false);
     }
@@ -154,6 +164,9 @@ final class NotificationHelper {
         }
     }
 
+    /**
+     * Adds a message to the history for a room. Returns true if it's a new/better message.
+     */
     static boolean addMessageToHistory(Context context, int roomId, @Nullable String messageId, String title, String body, long timestamp, boolean isSync) {
         return addMessageToHistory(context, roomId, 0, messageId, title, body, null, timestamp, isSync);
     }
@@ -188,12 +201,15 @@ final class NotificationHelper {
             }
         }
 
+        // Normalize sender name (for caching) and compute sender label (for notifications).
         String senderName = title;
         if (title != null && title.contains(" in ")) {
             senderName = title.split(" in ")[0];
         }
 
+        // If the provided name is generic, try to recover from persisted caches
         if (isGenericTitle(senderName)) {
+            // 1. Try by senderId if available
             if (senderId > 0) {
                 String cachedUser = userNamesById.get(senderId);
                 if (!isGenericTitle(cachedUser)) {
@@ -201,6 +217,7 @@ final class NotificationHelper {
                 }
             }
 
+            // 2. Try in-memory history for this session
             if (isGenericTitle(senderName)) {
                 List<MessageRecord> history = roomMessages.get(roomId);
                 if (history != null) {
@@ -215,6 +232,7 @@ final class NotificationHelper {
                 }
             }
 
+            // 3. Fallback to room name if it's likely a 1-to-1 chat
             if (isGenericTitle(senderName) && roomId > 0) {
                 String cachedRoomName = roomNamesById.get(roomId);
                 if (!isGenericTitle(cachedRoomName)) {
@@ -223,6 +241,7 @@ final class NotificationHelper {
             }
         }
 
+        // If we have a valid name and senderId, persist it
         if (senderId > 0 && !isGenericTitle(senderName)) {
             setUserName(context, senderId, senderName);
         }
@@ -231,6 +250,8 @@ final class NotificationHelper {
             senderName = getAppName(context);
         }
 
+        // senderKey uses the senderId when available so two users with the same display
+        // name are treated as distinct senders for deduplication purposes.
         String senderKey = senderId > 0 ? String.valueOf(senderId) : senderName;
 
         String normText = body.trim();
@@ -308,6 +329,10 @@ final class NotificationHelper {
         return true;
     }
 
+    /**
+     * Renders and posts the notification based on current history.
+     * Each room remains a child conversation notification under one app-level group.
+     */
     static void triggerNotificationUpdate(Context context, int roomId, String title) {
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) return;
@@ -315,6 +340,7 @@ final class NotificationHelper {
         ensureChannel(manager);
         loadNamesIfEmpty(context);
 
+        // Tap intent — opens the specific room
         Intent intent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         if (intent != null) {
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
@@ -328,6 +354,7 @@ final class NotificationHelper {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
+        // Dismiss intent
         Intent dismissIntent = new Intent(context, NotificationDismissReceiver.class);
         dismissIntent.putExtra(EXTRA_ROOM_ID, roomId);
         PendingIntent dismissPendingIntent = PendingIntent.getBroadcast(
@@ -337,6 +364,7 @@ final class NotificationHelper {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
+        // Resolve conversation title (room name)
         String convTitle = (title != null && title.contains(" in ")) ? title.split(" in ")[1] : title;
         if (roomId > 0 && isGenericTitle(convTitle)) {
             String cachedRoomName = roomNamesById.get(roomId);
@@ -348,10 +376,11 @@ final class NotificationHelper {
             convTitle = "Chat";
         }
 
+        // Create a shortcut for the room so Android 11+ shows the conversation avatar
         String shortcutId = "room_" + resolveNotificationId(roomId);
         Bitmap roomBitmap = buildInitialsBitmap(context, convTitle);
         IconCompat roomIconCompat = IconCompat.createWithBitmap(roomBitmap);
-
+        
         ShortcutInfoCompat shortcutInfo = new ShortcutInfoCompat.Builder(context, shortcutId)
                 .setShortLabel(convTitle)
                 .setLongLabel(convTitle)
@@ -363,6 +392,7 @@ final class NotificationHelper {
         ShortcutManagerCompat.pushDynamicShortcut(context, shortcutInfo);
 
         int notificationIconRes = getNotificationIconRes(context);
+        // Build the child notification with MessagingStyle (all messages for this room)
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(notificationIconRes)
                 .setLargeIcon(roomBitmap)
@@ -388,7 +418,9 @@ final class NotificationHelper {
             MessageRecord lastMsg = null;
             synchronized (history) {
                 for (MessageRecord msg : history) {
-                    IconCompat senderIcon = buildSenderIcon(context, msg.avatarSvg, msg.sender);
+                    // setKey() uses senderKey (senderId when known) so Android treats two
+                    // users with the same display name as distinct people in MessagingStyle.
+                        IconCompat senderIcon = buildSenderIcon(context, msg.avatarSvg, msg.sender);
                     Person sender = new Person.Builder()
                             .setName(nonEmptyOrDefault(msg.sender, "User"))
                             .setKey(msg.senderKey)
@@ -409,7 +441,10 @@ final class NotificationHelper {
                     .setContentText("You have new messages");
         }
 
+        // Post the child notification FIRST so the system has the child before the summary is updated
         manager.notify(resolveNotificationId(roomId), builder.build());
+
+        // Keep a single summary across all rooms (Signal-like bundle header)
         postOrCancelGlobalSummary(context, manager);
     }
 
@@ -420,9 +455,13 @@ final class NotificationHelper {
 
         for (Map.Entry<Integer, List<MessageRecord>> entry : roomMessages.entrySet()) {
             Integer key = entry.getKey();
-            if (key == null || key <= 0) continue;
+            if (key == null || key <= 0) {
+                continue;
+            }
             List<MessageRecord> history = entry.getValue();
-            if (history == null) continue;
+            if (history == null) {
+                continue;
+            }
             int roomCount;
             synchronized (history) {
                 roomCount = history.size();
@@ -433,7 +472,9 @@ final class NotificationHelper {
                     }
                 }
             }
-            if (roomCount <= 0) continue;
+            if (roomCount <= 0) {
+                continue;
+            }
             totalChats++;
             totalMessages += roomCount;
         }
@@ -445,7 +486,9 @@ final class NotificationHelper {
 
         String appName = getAppName(context);
         String summaryTitle = appName + " \u2022 " + totalMessages + " messages";
-        String summaryText = totalChats == 1 ? "1 chat" : totalChats + " chats";
+        String summaryText = totalChats == 1
+                ? "1 chat"
+                : totalChats + " chats";
 
         Intent summaryIntent = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         if (summaryIntent != null) {
@@ -458,9 +501,9 @@ final class NotificationHelper {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        int notificationIconRes = getNotificationIconRes(context);
+        int summaryIconRes = getNotificationIconRes(context);
         NotificationCompat.Builder summaryBuilder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(notificationIconRes)
+                .setSmallIcon(summaryIconRes)
                 .setContentTitle(summaryTitle)
                 .setContentText(summaryText)
                 .setNumber(totalMessages)
@@ -472,7 +515,9 @@ final class NotificationHelper {
                 .setContentIntent(summaryPendingIntent)
                 .setStyle(new NotificationCompat.InboxStyle().setSummaryText(summaryText));
 
-        if (latestTimestamp > 0) summaryBuilder.setWhen(latestTimestamp);
+        if (latestTimestamp > 0) {
+            summaryBuilder.setWhen(latestTimestamp);
+        }
 
         manager.notify(GLOBAL_SUMMARY_NOTIFICATION_ID, summaryBuilder.build());
     }
@@ -495,6 +540,7 @@ final class NotificationHelper {
         if (roomId > 0 && latestServerTimestamp > 0L) {
             setAndPersistDismissedUntilForRoom(context, roomId, latestServerTimestamp);
         }
+        // Clear this room's history and refresh the global summary.
         roomMessages.remove(roomId);
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager != null) {
@@ -560,7 +606,8 @@ final class NotificationHelper {
                     if (roomId > 0 && dismissedUntil > 0L) {
                         dismissedUntilByRoom.put(roomId, dismissedUntil);
                     }
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException ignored) {
+                }
             }
         } catch (JSONException e) {
             Log.w(TAG, "Failed to load dismissed cutoff by room", e);
@@ -588,7 +635,8 @@ final class NotificationHelper {
                     if (id > 0 && !TextUtils.isEmpty(name)) {
                         targetMap.put(id, name);
                     }
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException ignored) {
+                }
             }
         } catch (JSONException e) {
             Log.w(TAG, "Failed to load map for " + key, e);
@@ -600,7 +648,8 @@ final class NotificationHelper {
         for (Map.Entry<Integer, String> entry : map.entrySet()) {
             try {
                 object.put(String.valueOf(entry.getKey()), entry.getValue());
-            } catch (JSONException ignored) {}
+            } catch (JSONException ignored) {
+            }
         }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putString(key, object.toString()).apply();
@@ -617,6 +666,7 @@ final class NotificationHelper {
         synchronized (recentMessageIds) {
             recentMessageIds.remove(messageId);
             recentMessageIds.add(messageId);
+
             if (recentMessageIds.size() > MAX_PERSISTENT_IDS) {
                 Iterator<String> it = recentMessageIds.iterator();
                 int toRemove = recentMessageIds.size() - MAX_PERSISTENT_IDS;
@@ -627,6 +677,7 @@ final class NotificationHelper {
                 }
             }
         }
+
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         JSONArray array = new JSONArray();
         synchronized (recentMessageIds) {
@@ -639,6 +690,7 @@ final class NotificationHelper {
         synchronized (dismissedMessageIds) {
             dismissedMessageIds.remove(messageId);
             dismissedMessageIds.add(messageId);
+
             if (dismissedMessageIds.size() > MAX_DISMISSED_IDS) {
                 Iterator<String> it = dismissedMessageIds.iterator();
                 int toRemove = dismissedMessageIds.size() - MAX_DISMISSED_IDS;
@@ -649,6 +701,7 @@ final class NotificationHelper {
                 }
             }
         }
+
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         JSONArray array = new JSONArray();
         synchronized (dismissedMessageIds) {
@@ -674,7 +727,8 @@ final class NotificationHelper {
             if (roomId == null || dismissedUntilTs == null || roomId <= 0 || dismissedUntilTs <= 0L) continue;
             try {
                 object.put(String.valueOf(roomId), dismissedUntilTs);
-            } catch (JSONException ignored) {}
+            } catch (JSONException ignored) {
+            }
         }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putString(KEY_DISMISSED_UNTIL_BY_ROOM, object.toString()).apply();
@@ -703,24 +757,6 @@ final class NotificationHelper {
         return value == null || value.trim().isEmpty() ? fallback : value;
     }
 
-    private static int getNotificationIconRes(Context context) {
-        int resId = context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName());
-        return resId != 0 ? resId : android.R.drawable.ic_dialog_info;
-    }
-
-    private static int getTransparentIconRes(Context context) {
-        int resId = context.getResources().getIdentifier("ic_transparent", "drawable", context.getPackageName());
-        return resId != 0 ? resId : android.R.drawable.ic_dialog_info;
-    }
-
-    private static String getAppName(Context context) {
-        try {
-            return context.getApplicationInfo().loadLabel(context.getPackageManager()).toString();
-        } catch (Exception e) {
-            return context.getPackageName();
-        }
-    }
-
     private static IconCompat buildSenderIcon(Context context, @Nullable String avatarSvg, @Nullable String senderName) {
         Log.d(TAG, "buildSenderIcon: attempting to build icon for sender=" + senderName + ", avatarSvg present=" + !TextUtils.isEmpty(avatarSvg));
         Bitmap avatarBitmap = renderAvatarSvg(avatarSvg);
@@ -735,16 +771,26 @@ final class NotificationHelper {
     @Nullable
     private static Bitmap renderAvatarSvg(@Nullable String avatarSvg) {
         if (TextUtils.isEmpty(avatarSvg)) {
+            Log.d(TAG, "renderAvatarSvg: avatar_svg is empty");
             return null;
         }
         try {
+            Log.d(TAG, "renderAvatarSvg: parsing SVG, length=" + avatarSvg.length());
             SVG svg = SVG.getFromString(avatarSvg);
+            Log.d(TAG, "renderAvatarSvg: SVG parsed successfully, creating 128x128 bitmap");
+            
             Bitmap bitmap = Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888);
             Canvas canvas = new Canvas(bitmap);
+            
+            // Set document size and render
             svg.setDocumentHeight(128f);
             svg.setDocumentWidth(128f);
             svg.setRenderDPI(96f);
+            
+            Log.d(TAG, "renderAvatarSvg: rendering SVG to canvas");
             svg.renderToCanvas(canvas);
+            
+            Log.d(TAG, "renderAvatarSvg: SVG rendered successfully");
             return bitmap;
         } catch (Exception e) {
             Log.e(TAG, "renderAvatarSvg: failed to render SVG", e);
@@ -835,5 +881,18 @@ final class NotificationHelper {
     static String getUserName(int userId) {
         if (userId <= 0) return null;
         return userNamesById.get(userId);
+    }
+
+    private static int getNotificationIconRes(Context context) {
+        int resId = context.getResources().getIdentifier("ic_notification", "drawable", context.getPackageName());
+        return resId != 0 ? resId : android.R.drawable.ic_dialog_info;
+    }
+
+    private static String getAppName(Context context) {
+        try {
+            return context.getApplicationInfo().loadLabel(context.getPackageManager()).toString();
+        } catch (Exception e) {
+            return context.getPackageName();
+        }
     }
 }

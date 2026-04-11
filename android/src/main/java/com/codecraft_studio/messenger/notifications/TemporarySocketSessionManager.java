@@ -7,6 +7,8 @@ import android.net.NetworkInfo;
 import android.text.TextUtils;
 import android.util.Log;
 
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.net.URISyntaxException;
@@ -44,7 +46,13 @@ final class TemporarySocketSessionManager {
     private static final Set<String> MESSAGE_EVENTS = new HashSet<>(Arrays.asList(
             "sync_messages_response",
             "sync:messages",
+            // "room:new_message",
+            // "room:message",
             "room:message_notification"
+            // "notification:new",
+            // "message:new",
+            // "new_message",
+            // "message"
     ));
 
     private TemporarySocketSessionManager() {
@@ -53,6 +61,18 @@ final class TemporarySocketSessionManager {
     static boolean runSession(Context context, Map<String, String> payloadData) {
         Log.i(TAG, "[ENTRY][TEMP_SOCKET_SESSION] runSession()");
         Log.i(TAG, "runSession() payloadData=" + safePreviewMap(payloadData));
+        final String sessionMessageId = firstNonEmpty(
+            payloadData != null ? payloadData.get("message_id") : null,
+            payloadData != null ? payloadData.get("messageId") : null,
+            payloadData != null ? payloadData.get("id") : null
+        );
+        final Integer sessionRoomId = parseNullableInt(firstNonEmpty(
+            payloadData != null ? payloadData.get("room_id") : null,
+            payloadData != null ? payloadData.get("roomId") : null
+        ));
+        final String sessionTraceId = !TextUtils.isEmpty(sessionMessageId)
+            ? "msg-" + sessionMessageId
+            : "android-socket-" + System.currentTimeMillis();
         if (!isNetworkAvailable(context)) {
             Log.w(TAG, "Socket session aborted: No network connectivity.");
             return false;
@@ -99,35 +119,142 @@ final class TemporarySocketSessionManager {
 
             socket.on(Socket.EVENT_CONNECT, args -> {
                 Log.d(TAG, "Socket connected successfully.");
+                MessageFlowLogger.log(
+                        context,
+                        sessionTraceId,
+                        sessionMessageId,
+                        sessionRoomId,
+                        null,
+                        "android_socket_connected",
+                        "Android background socket connected after wake-up",
+                        "socket",
+                        "success",
+                        null,
+                        null
+                );
                 resetIdleTimer.run();
-
+                
                 if (payloadData != null) {
                     String roomId = firstNonEmpty(payloadData.get("roomId"), payloadData.get("room_id"));
                     if (!TextUtils.isEmpty(roomId)) {
-                        Log.d(TAG, "Emitting join_room with roomId=" + roomId);
+                        Log.d(TAG, "Emitting join_room with roomId=" + roomId + " payloadData=" + safePreviewMap(payloadData));
                         socket.emit("join_room", roomId);
                     }
                 }
 
-                Log.d(TAG, "Emitting sync_messages");
+                Log.d(TAG, "Emitting sync_messages with payloadData=" + safePreviewMap(payloadData));
+                JSONObject syncPayload = new JSONObject();
+                try {
+                    if (sessionRoomId != null) {
+                        syncPayload.put("room_id", sessionRoomId);
+                    }
+                    if (!TextUtils.isEmpty(sessionMessageId)) {
+                        syncPayload.put("trigger_message_id", sessionMessageId);
+                    }
+                } catch (JSONException e) {
+                    Log.e(TAG, "Error building syncPayload", e);
+                }
+                MessageFlowLogger.log(
+                        context,
+                        sessionTraceId,
+                        sessionMessageId,
+                        sessionRoomId,
+                        null,
+                        "android_sync_messages_emitted",
+                        "Android emitted sync_messages after background socket connect",
+                        "socket",
+                        "success",
+                        syncPayload,
+                        null
+                );
                 socket.emit("sync_messages", (Ack) ackArgs -> {
                     Log.d(TAG, "Received sync_messages ACK args=" + safePreviewArgs(ackArgs));
+                    JSONObject ackPayload = new JSONObject();
+                    try {
+                        ackPayload.put("ack_args_count", ackArgs != null ? ackArgs.length : 0);
+                    } catch (JSONException e) {
+                        Log.e(TAG, "Error building ackPayload", e);
+                    }
+                    MessageFlowLogger.log(
+                            context,
+                            sessionTraceId,
+                            sessionMessageId,
+                            sessionRoomId,
+                            null,
+                            "android_sync_messages_ack_received",
+                            "Android received sync_messages ACK from server",
+                            "socket",
+                            "success",
+                            ackPayload,
+                            null
+                    );
                     resetIdleTimer.run();
                 });
             });
 
             socket.onAnyIncoming(args -> {
                 if (args != null && args.length > 0) {
+                    // Reset idle timer for ANY incoming data (including global:online_users)
                     resetIdleTimer.run();
 
+                    // Log the raw payload to Logcat
                     Log.d(TAG, "RAW SOCKET DATA: " + Arrays.toString(args));
 
                     String event = String.valueOf(args[0]);
                     Object[] payloadArgs = args.length > 1 ? Arrays.copyOfRange(args, 1, args.length) : new Object[0];
-                    Log.d(TAG, "Socket incoming event=" + event + " payloadCount=" + payloadArgs.length);
+                    Log.d(TAG, "Socket incoming event=" + event + " payloadCount=" + payloadArgs.length + " payload=" + safePreviewArgs(payloadArgs));
 
                     if ("sync_messages_response".equals(event)) {
                         syncResponseReceived.set(true);
+                        Object payload = args.length > 1 ? args[1] : "no payload";
+                        Log.d(TAG, "Received sync_messages_response, payload size: " + (payload != null ? payload.toString().length() : 0));
+                    }
+
+                    if (MESSAGE_EVENTS.contains(event)) {
+                        String eventMessageId = extractMessageIdFromArgs(payloadArgs);
+                        Integer eventRoomId = extractRoomIdFromArgs(payloadArgs);
+                        Integer eventSenderId = extractSenderIdFromArgs(payloadArgs);
+                        String eventTraceId = !TextUtils.isEmpty(eventMessageId) ? "msg-" + eventMessageId : sessionTraceId;
+                        JSONObject eventPayload = new JSONObject();
+                        try {
+                            eventPayload.put("event", event);
+                            eventPayload.put("payload_count", payloadArgs.length);
+                            if (eventSenderId != null) {
+                                eventPayload.put("sender_id", eventSenderId);
+                            }
+                        } catch (JSONException e) {
+                            Log.e(TAG, "Error building eventPayload", e);
+                        }
+
+                        if ("sync_messages_response".equals(event)) {
+                            MessageFlowLogger.log(
+                                    context,
+                                    eventTraceId,
+                                    eventMessageId != null ? eventMessageId : sessionMessageId,
+                                    eventRoomId != null ? eventRoomId : sessionRoomId,
+                                    null,
+                                    "android_sync_messages_response_received",
+                                    "Android received sync_messages_response from server",
+                                    "socket",
+                                    "success",
+                                    eventPayload,
+                                    null
+                            );
+                        } else if ("room:message_notification".equals(event)) {
+                            MessageFlowLogger.log(
+                                    context,
+                                    eventTraceId,
+                                    eventMessageId != null ? eventMessageId : sessionMessageId,
+                                    eventRoomId != null ? eventRoomId : sessionRoomId,
+                                    null,
+                                    "android_room_message_notification_received",
+                                    "Android received room:message_notification while app was backgrounded",
+                                    "socket",
+                                    "success",
+                                    eventPayload,
+                                    null
+                            );
+                        }
                     }
 
                     if (MESSAGE_EVENTS.contains(event)) {
@@ -141,22 +268,23 @@ final class TemporarySocketSessionManager {
             });
 
             socket.on(Socket.EVENT_CONNECT_ERROR, args -> {
-                Log.w(TAG, "Socket connect error: " + firstArgToString(args));
+                Log.w(TAG, "Socket connect error: " + firstArgToString(args) + " fullArgs=" + safePreviewArgs(args));
                 finishSession.run();
             });
 
             socket.on("error", args -> {
-                Log.w(TAG, "Socket error: " + firstArgToString(args));
+                Log.w(TAG, "Socket error: " + firstArgToString(args) + " fullArgs=" + safePreviewArgs(args));
             });
 
             socket.on(Socket.EVENT_DISCONNECT, args -> {
-                Log.d(TAG, "Socket disconnected. Reason: " + firstArgToString(args));
+                Log.d(TAG, "Socket disconnected. Reason: " + firstArgToString(args) + " fullArgs=" + safePreviewArgs(args));
                 finishSession.run();
             });
 
             socket.connect();
-            resetIdleTimer.run();
+            resetIdleTimer.run(); // Initial timeout for connection
 
+            // Wait until session is done or max time limit is reached.
             if (!sessionDone.await(config.maxSessionMs, TimeUnit.MILLISECONDS)) {
                 Log.i(TAG, "Socket session reached max time limit (" + config.maxSessionMs + "ms). Force closing.");
             }
@@ -181,8 +309,17 @@ final class TemporarySocketSessionManager {
         return activeNetwork != null && activeNetwork.isConnectedOrConnecting();
     }
 
+    private static Integer parseNullableInt(String raw) {
+        if (TextUtils.isEmpty(raw)) return null;
+        try {
+            return Integer.parseInt(raw);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private static boolean handleSocketArgs(Context context, String event, Object[] args, boolean syncReceived) {
-        Log.i(TAG, "[ENTRY][TEMP_SOCKET_SESSION] handleSocketArgs() event=" + event);
+        Log.i(TAG, "[ENTRY][TEMP_SOCKET_SESSION] handleSocketArgs() event=" + event + " args=" + (args == null ? 0 : args.length));
         if (args == null || args.length == 0) return false;
         boolean handled = false;
         for (Object arg : args) {
@@ -190,6 +327,8 @@ final class TemporarySocketSessionManager {
                     ? EncryptedMessageNotifier.notifyFromSyncMessagesResponse(context, arg)
                     : EncryptedMessageNotifier.notifyFromSocketPayload(context, arg);
 
+            // Fallback: If socket payload parsing didn't produce a notification AND sync_messages_response was already received,
+            // try parsing it as a raw unread API record.
             if (!notified && syncReceived && arg instanceof JSONObject) {
                 if (EncryptedMessageNotifier.notifyFromUnreadApiRecord(context, (JSONObject) arg)) {
                     notified = true;
@@ -197,6 +336,19 @@ final class TemporarySocketSessionManager {
             }
 
             if (notified) {
+                MessageFlowLogger.log(
+                        context,
+                        "android-socket-" + System.currentTimeMillis(),
+                        null,
+                        null,
+                        null,
+                        "android_socket_event_processed",
+                        "Android processed socket event and displayed/updated notification",
+                        "socket",
+                        "success",
+                        null,
+                        null
+                );
                 handled = true;
             }
         }
@@ -208,6 +360,7 @@ final class TemporarySocketSessionManager {
         options.forceNew = true;
         options.reconnection = false;
         options.timeout = config.connectTimeoutMs;
+        // Allow both WebSocket and Polling for better compatibility and fallback
         options.transports = new String[]{WebSocket.NAME, Polling.NAME};
 
         if (!setAuthIfSupported(options, config.jwtToken)) {
@@ -251,6 +404,73 @@ final class TemporarySocketSessionManager {
 
     private static String firstArgToString(Object[] args) {
         return (args != null && args.length > 0) ? String.valueOf(args[0]) : "unknown";
+    }
+
+    private static JSONObject firstJsonObject(Object[] args) {
+        if (args == null) return null;
+        for (Object arg : args) {
+            JSONObject object = firstJsonObject(arg);
+            if (object != null) return object;
+        }
+        return null;
+    }
+
+    private static JSONObject firstJsonObject(Object value) {
+        if (value instanceof JSONObject) {
+            JSONObject json = (JSONObject) value;
+
+            JSONArray messages = json.optJSONArray("messages");
+            if (messages != null && messages.length() > 0 && messages.optJSONObject(0) != null) {
+                return messages.optJSONObject(0);
+            }
+
+            JSONObject data = json.optJSONObject("data");
+            if (data != null) {
+                JSONObject nested = firstJsonObject(data);
+                if (nested != null) return nested;
+            }
+
+            JSONObject message = json.optJSONObject("message");
+            if (message != null) {
+                return message;
+            }
+
+            return json;
+        }
+
+        if (value instanceof JSONArray) {
+            JSONArray array = (JSONArray) value;
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject object = firstJsonObject(array.opt(i));
+                if (object != null) return object;
+            }
+        }
+
+        return null;
+    }
+
+    private static String extractMessageIdFromArgs(Object[] args) {
+        JSONObject json = firstJsonObject(args);
+        if (json == null) return null;
+        return firstNonEmpty(
+                json.optString("message_id", null),
+                json.optString("messageId", null),
+                json.optString("id", null)
+        );
+    }
+
+    private static Integer extractRoomIdFromArgs(Object[] args) {
+        JSONObject json = firstJsonObject(args);
+        if (json == null) return null;
+        int roomId = json.optInt("room_id", json.optInt("roomId", 0));
+        return roomId > 0 ? roomId : null;
+    }
+
+    private static Integer extractSenderIdFromArgs(Object[] args) {
+        JSONObject json = firstJsonObject(args);
+        if (json == null) return null;
+        int senderId = json.optInt("sender_id", json.optInt("senderId", json.optInt("user_id", json.optInt("userId", 0))));
+        return senderId > 0 ? senderId : null;
     }
 
     private static String firstNonEmpty(String... values) {

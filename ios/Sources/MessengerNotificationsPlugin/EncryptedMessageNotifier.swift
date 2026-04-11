@@ -2,8 +2,43 @@ import Foundation
 
 public enum EncryptedMessageNotifier {
 
+    private static func currentTimestampMs() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private static func logDetailedFlow(
+        traceId: String,
+        messageId: String? = nil,
+        roomId: Int? = nil,
+        userId: Int? = nil,
+        stepKey: String,
+        stepMessage: String,
+        channel: String,
+        status: String = "info",
+        payload: [String: Any] = [:],
+        error: String? = nil
+    ) {
+        var fullPayload = payload
+        fullPayload["timestamp_ms"] = currentTimestampMs()
+        MessageFlowLogger.log(
+            traceId: traceId,
+            messageId: messageId,
+            roomId: roomId,
+            userId: userId,
+            stepKey: stepKey,
+            stepMessage: stepMessage,
+            channel: channel,
+            status: status,
+            payload: fullPayload,
+            error: error
+        )
+    }
+
+    /// iOS equivalent of Android's EncryptedMessageNotifier.notifyFromPushData
     @discardableResult
     public static func notifyFromPushData(_ data: [String: Any]) -> Bool {
+        // Android often wraps actual message fields inside a messages[] list.
+        // If present, prefer the first message map, merged on top of root.
         let effective = mergedWithFirstMessage(from: data)
 
         let roomId = int(from: effective, keys: ["roomId", "room_id"]) ?? 0
@@ -25,6 +60,20 @@ public enum EncryptedMessageNotifier {
         )
 
         let messageId = NotificationHelper.coerceMessageId(from: effective)
+        let traceId = {
+            if let mid = messageId, !mid.isEmpty { return "msg-\(mid)" }
+            return "ios-push-fallback-\(Int(Date().timeIntervalSince1970 * 1000))"
+        }()
+        logDetailedFlow(
+            traceId: traceId,
+            messageId: messageId,
+            roomId: roomId,
+            userId: senderId > 0 ? senderId : nil,
+            stepKey: "ios_push_fallback_started",
+            stepMessage: "Push fallback notification flow started and is normalizing payload fields before decryption.",
+            channel: "notification",
+            status: "start"
+        )
 
         let timestampMs = parseTimestamp(
             string: firstNonEmptyString(from: effective, keys: ["created_at", "createdAt", "timestamp"])
@@ -56,6 +105,16 @@ public enum EncryptedMessageNotifier {
         guard let nonEmptyBody = finalBody?.trimmingCharacters(in: .whitespacesAndNewlines),
               !nonEmptyBody.isEmpty else {
             print("🔐 [EncryptedMessageNotifier] Ignoring push fallback: no usable message body")
+            logDetailedFlow(
+                traceId: traceId,
+                messageId: messageId,
+                roomId: roomId,
+                userId: senderId > 0 ? senderId : nil,
+                stepKey: "ios_push_fallback_skipped_empty_body",
+                stepMessage: "Push fallback was skipped because body text was empty after decryption/normalization and could not produce a meaningful notification.",
+                channel: "notification",
+                status: "warning"
+            )
             return false
         }
 
@@ -94,6 +153,36 @@ public enum EncryptedMessageNotifier {
             messageId: messageId,
             timestamp: tsMs,
             isSync: false
+        )
+
+        MessageFlowLogger.log(
+            traceId: traceId,
+            messageId: messageId,
+            roomId: roomId,
+            userId: senderId > 0 ? senderId : nil,
+            stepKey: "ios_notification_from_push_fallback",
+            stepMessage: "iOS decrypted push payload and displayed local notification",
+            channel: "notification",
+            status: "success",
+            payload: [
+                "title": title,
+                "body_preview": String(nonEmptyBody.prefix(120)),
+                "timestamp_ms": currentTimestampMs()
+            ]
+        )
+        logDetailedFlow(
+            traceId: traceId,
+            messageId: messageId,
+            roomId: roomId,
+            userId: senderId > 0 ? senderId : nil,
+            stepKey: "ios_push_fallback_notification_shown",
+            stepMessage: "Push fallback successfully decrypted available fields and displayed a local notification with user-friendly title and body content.",
+            channel: "notification",
+            status: "success",
+            payload: [
+                "title": title,
+                "body_preview": String(nonEmptyBody.prefix(120))
+            ]
         )
 
         print("🔐 [EncryptedMessageNotifier] Shown notification via FCM payload fallback title='\(title)' body='\(nonEmptyBody)' roomId=\(roomId)")
@@ -158,6 +247,7 @@ public enum EncryptedMessageNotifier {
 
     // MARK: - Small utilities
 
+    /// If payload has a messages field (array or json string), merge the first message map on top of root.
     private static func mergedWithFirstMessage(from root: [String: Any]) -> [String: Any] {
         var result = root
 
@@ -269,3 +359,4 @@ public enum EncryptedMessageNotifier {
         !looksLikeEncryptedJson(value) && !looksLikeCiphertextBlob(value)
     }
 }
+
