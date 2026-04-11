@@ -7,10 +7,8 @@ import android.app.job.JobService;
 import android.content.ComponentName;
 import android.content.Context;
 import android.util.Log;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
-
 import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,14 +26,11 @@ public class FcmJobService extends JobService {
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
 
     public static void schedule(@NonNull Context context) {
-        JobInfo.Builder builder = new JobInfo.Builder(
-                JOB_ID,
-                new ComponentName(context, FcmJobService.class)
-        )
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setBackoffCriteria(5_000L, JobInfo.BACKOFF_POLICY_LINEAR)
-                .setMinimumLatency(MIN_LATENCY_MS)
-                .setOverrideDeadline(OVERRIDE_DEADLINE_MS);
+        JobInfo.Builder builder = new JobInfo.Builder(JOB_ID, new ComponentName(context, FcmJobService.class))
+            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+            .setBackoffCriteria(5_000L, JobInfo.BACKOFF_POLICY_LINEAR)
+            .setMinimumLatency(MIN_LATENCY_MS)
+            .setOverrideDeadline(OVERRIDE_DEADLINE_MS);
 
         JobScheduler scheduler = context.getSystemService(JobScheduler.class);
         if (scheduler != null) {
@@ -47,10 +42,7 @@ public class FcmJobService extends JobService {
     public boolean onStartJob(JobParameters params) {
         Log.d(TAG, "onStartJob()");
         EXECUTOR.execute(() -> {
-            boolean success = FcmFetchManager.retrieveMessages(
-                    getApplicationContext(),
-                    Collections.emptyMap()
-            );
+            boolean success = FcmFetchManager.retrieveMessages(getApplicationContext(), Collections.emptyMap());
 
             if (success) {
                 FcmFetchManager.cancelMayHaveMessagesNotification(this);

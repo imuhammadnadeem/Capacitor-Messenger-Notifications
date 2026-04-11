@@ -4,11 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
 import android.util.Log;
-
 import androidx.annotation.Nullable;
-
-import org.json.JSONObject;
-
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -16,51 +12,53 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import org.json.JSONObject;
 
 final class MessageFlowLogger {
+
     private static final String TAG = "MessageFlowLogger";
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
     private static final String DEFAULT_BASE_URL = "https://4.rw";
     private static final List<String> BASE_URL_PREF_KEYS = Arrays.asList(
-            "backendBaseUrl",
-            "backend_url",
-            "apiBaseUrl",
-            "api_base_url",
-            "serverUrl",
-            "server_url"
+        "backendBaseUrl",
+        "backend_url",
+        "apiBaseUrl",
+        "api_base_url",
+        "serverUrl",
+        "server_url"
     );
 
     private MessageFlowLogger() {}
 
     static void log(
-            Context context,
-            String traceId,
-            @Nullable String messageId,
-            @Nullable Integer roomId,
-            @Nullable Integer userId,
-            String stepKey,
-            String stepMessage,
-            String channel,
-            String status,
-            @Nullable JSONObject payload,
-            @Nullable String error
+        Context context,
+        String traceId,
+        @Nullable String messageId,
+        @Nullable Integer roomId,
+        @Nullable Integer userId,
+        String stepKey,
+        String stepMessage,
+        String channel,
+        String status,
+        @Nullable JSONObject payload,
+        @Nullable String error
     ) {
         Context app = context.getApplicationContext();
         EXECUTOR.execute(() -> postLog(app, traceId, messageId, roomId, userId, stepKey, stepMessage, channel, status, payload, error));
     }
 
     private static void postLog(
-            Context context,
-            String traceId,
-            @Nullable String messageId,
-            @Nullable Integer roomId,
-            @Nullable Integer userId,
-            String stepKey,
-            String stepMessage,
-            String channel,
-            String status,
-            @Nullable JSONObject payload,
-            @Nullable String error
+        Context context,
+        String traceId,
+        @Nullable String messageId,
+        @Nullable Integer roomId,
+        @Nullable Integer userId,
+        String stepKey,
+        String stepMessage,
+        String channel,
+        String status,
+        @Nullable JSONObject payload,
+        @Nullable String error
     ) {
         HttpURLConnection conn = null;
         try {
@@ -75,7 +73,10 @@ final class MessageFlowLogger {
             body.put("source", "mobile-native");
             body.put("channel", channel);
             body.put("status", status);
-            body.put("created_at", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", java.util.Locale.US).format(new java.util.Date()));
+            body.put(
+                "created_at",
+                new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSXXX", java.util.Locale.US).format(new java.util.Date())
+            );
 
             if (!TextUtils.isEmpty(messageId)) {
                 try {

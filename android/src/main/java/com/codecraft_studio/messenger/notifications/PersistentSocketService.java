@@ -12,23 +12,19 @@ import android.os.Build;
 import android.os.IBinder;
 import android.text.TextUtils;
 import android.util.Log;
-
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-
-import org.json.JSONObject;
-
+import io.socket.client.IO;
+import io.socket.client.Socket;
+import io.socket.engineio.client.transports.Polling;
+import io.socket.engineio.client.transports.WebSocket;
 import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-
-import io.socket.client.IO;
-import io.socket.client.Socket;
-import io.socket.engineio.client.transports.Polling;
-import io.socket.engineio.client.transports.WebSocket;
+import org.json.JSONObject;
 
 /**
  * A persistent foreground service that maintains a WebSocket connection
@@ -42,7 +38,8 @@ public class PersistentSocketService extends Service {
 
     private static final String DEFAULT_SOCKET_URL = "wss://4.rw";
 
-    private static final Set<String> MESSAGE_EVENTS = new HashSet<>(Arrays.asList(
+    private static final Set<String> MESSAGE_EVENTS = new HashSet<>(
+        Arrays.asList(
             "sync_messages_response",
             "sync:messages",
             // "room:new_message",
@@ -52,7 +49,8 @@ public class PersistentSocketService extends Service {
             // "message:new",
             // "new_message",
             // "message"
-    ));
+        )
+    );
 
     private Socket mSocket;
     private SharedPreferences.OnSharedPreferenceChangeListener mPrefsListener;
@@ -81,7 +79,7 @@ public class PersistentSocketService extends Service {
         Log.i(TAG, "onCreate()");
         ensureChannel();
         startForeground(NOTIFICATION_ID, buildNotification("Initialising..."));
-        
+
         setupPrefsListener();
         connectSocket();
     }
@@ -143,7 +141,7 @@ public class PersistentSocketService extends Service {
             options.reconnectionDelay = 5000;
             options.reconnectionDelayMax = 30000;
             options.timeout = 20000;
-            options.transports = new String[]{WebSocket.NAME, Polling.NAME};
+            options.transports = new String[] { WebSocket.NAME, Polling.NAME };
 
             if (!setAuthIfSupported(options, mCurrentToken)) {
                 options.query = "token=" + mCurrentToken;
@@ -152,23 +150,23 @@ public class PersistentSocketService extends Service {
             Log.i(TAG, "Connecting to " + socketUrl);
             mSocket = IO.socket(socketUrl, options);
 
-            mSocket.on(Socket.EVENT_CONNECT, args -> {
+            mSocket.on(Socket.EVENT_CONNECT, (args) -> {
                 Log.i(TAG, "Socket connected");
                 updateNotification("Connected");
                 mSocket.emit("sync_messages");
             });
 
-            mSocket.on(Socket.EVENT_DISCONNECT, args -> {
+            mSocket.on(Socket.EVENT_DISCONNECT, (args) -> {
                 Log.i(TAG, "Socket disconnected: " + (args.length > 0 ? args[0] : "unknown"));
                 updateNotification("Reconnecting...");
             });
 
-            mSocket.on(Socket.EVENT_CONNECT_ERROR, args -> {
+            mSocket.on(Socket.EVENT_CONNECT_ERROR, (args) -> {
                 Log.w(TAG, "Socket connection error: " + (args.length > 0 ? args[0] : "unknown"));
                 updateNotification("Connection error, retrying...");
             });
 
-            mSocket.onAnyIncoming(args -> {
+            mSocket.onAnyIncoming((args) -> {
                 if (args != null && args.length > 0) {
                     String event = String.valueOf(args[0]);
                     if (MESSAGE_EVENTS.contains(event)) {
@@ -190,8 +188,8 @@ public class PersistentSocketService extends Service {
         boolean syncReceived = "sync_messages_response".equals(event);
         for (Object arg : args) {
             boolean notified = syncReceived
-                    ? EncryptedMessageNotifier.notifyFromSyncMessagesResponse(this, arg)
-                    : EncryptedMessageNotifier.notifyFromSocketPayload(this, arg);
+                ? EncryptedMessageNotifier.notifyFromSyncMessagesResponse(this, arg)
+                : EncryptedMessageNotifier.notifyFromSocketPayload(this, arg);
 
             if (!notified && syncReceived && arg instanceof JSONObject) {
                 EncryptedMessageNotifier.notifyFromUnreadApiRecord(this, (JSONObject) arg);
@@ -211,9 +209,9 @@ public class PersistentSocketService extends Service {
     private void ensureChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "Persistent Connection",
-                    NotificationManager.IMPORTANCE_MIN  // hides status bar icon (Signal-style)
+                CHANNEL_ID,
+                "Persistent Connection",
+                NotificationManager.IMPORTANCE_MIN // hides status bar icon (Signal-style)
             );
             channel.setDescription("Maintains connection to receive messages when FCM is unavailable");
             channel.setShowBadge(false);
@@ -233,10 +231,10 @@ public class PersistentSocketService extends Service {
         if (launchIntent != null) {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             pendingIntent = PendingIntent.getActivity(
-                    this,
-                    0,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                this,
+                0,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
         }
 
@@ -244,18 +242,18 @@ public class PersistentSocketService extends Service {
         if (transparentIconRes == 0) transparentIconRes = android.R.drawable.ic_delete;
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(transparentIconRes)
-                .setContentTitle(getAppName())
-                .setContentText(contentText)
-                .setOngoing(true)
-                .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                .setOnlyAlertOnce(true)
-                .setSilent(true)
-                .setPriority(NotificationCompat.PRIORITY_MIN)
-                .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
-                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-                .setContentIntent(pendingIntent)
-                .build();
+            .setSmallIcon(transparentIconRes)
+            .setContentTitle(getAppName())
+            .setContentText(contentText)
+            .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setContentIntent(pendingIntent)
+            .build();
     }
 
     private void updateNotification(String contentText) {

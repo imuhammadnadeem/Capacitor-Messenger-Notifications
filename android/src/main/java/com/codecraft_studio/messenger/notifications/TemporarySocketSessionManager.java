@@ -6,11 +6,11 @@ import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.text.TextUtils;
 import android.util.Log;
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
+import io.socket.client.Ack;
+import io.socket.client.IO;
+import io.socket.client.Socket;
+import io.socket.engineio.client.transports.Polling;
+import io.socket.engineio.client.transports.WebSocket;
 import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -24,12 +24,9 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-
-import io.socket.client.IO;
-import io.socket.client.Socket;
-import io.socket.client.Ack;
-import io.socket.engineio.client.transports.WebSocket;
-import io.socket.engineio.client.transports.Polling;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Opens a short-lived Socket.IO session triggered by FCM and auto-closes after idle timeout.
@@ -43,7 +40,8 @@ final class TemporarySocketSessionManager {
     private static final long DEFAULT_MAX_SESSION_MS = 45_000L;
     private static final String DEFAULT_SOCKET_URL = "wss://4.rw";
 
-    private static final Set<String> MESSAGE_EVENTS = new HashSet<>(Arrays.asList(
+    private static final Set<String> MESSAGE_EVENTS = new HashSet<>(
+        Arrays.asList(
             "sync_messages_response",
             "sync:messages",
             // "room:new_message",
@@ -53,10 +51,10 @@ final class TemporarySocketSessionManager {
             // "message:new",
             // "new_message",
             // "message"
-    ));
+        )
+    );
 
-    private TemporarySocketSessionManager() {
-    }
+    private TemporarySocketSessionManager() {}
 
     static boolean runSession(Context context, Map<String, String> payloadData) {
         Log.i(TAG, "[ENTRY][TEMP_SOCKET_SESSION] runSession()");
@@ -66,10 +64,9 @@ final class TemporarySocketSessionManager {
             payloadData != null ? payloadData.get("messageId") : null,
             payloadData != null ? payloadData.get("id") : null
         );
-        final Integer sessionRoomId = parseNullableInt(firstNonEmpty(
-            payloadData != null ? payloadData.get("room_id") : null,
-            payloadData != null ? payloadData.get("roomId") : null
-        ));
+        final Integer sessionRoomId = parseNullableInt(
+            firstNonEmpty(payloadData != null ? payloadData.get("room_id") : null, payloadData != null ? payloadData.get("roomId") : null)
+        );
         final String sessionTraceId = !TextUtils.isEmpty(sessionMessageId)
             ? "msg-" + sessionMessageId
             : "android-socket-" + System.currentTimeMillis();
@@ -117,23 +114,23 @@ final class TemporarySocketSessionManager {
             Socket socket = createSocket(config);
             socketRef.set(socket);
 
-            socket.on(Socket.EVENT_CONNECT, args -> {
+            socket.on(Socket.EVENT_CONNECT, (args) -> {
                 Log.d(TAG, "Socket connected successfully.");
                 MessageFlowLogger.log(
-                        context,
-                        sessionTraceId,
-                        sessionMessageId,
-                        sessionRoomId,
-                        null,
-                        "android_socket_connected",
-                        "Android background socket connected after wake-up",
-                        "socket",
-                        "success",
-                        null,
-                        null
+                    context,
+                    sessionTraceId,
+                    sessionMessageId,
+                    sessionRoomId,
+                    null,
+                    "android_socket_connected",
+                    "Android background socket connected after wake-up",
+                    "socket",
+                    "success",
+                    null,
+                    null
                 );
                 resetIdleTimer.run();
-                
+
                 if (payloadData != null) {
                     String roomId = firstNonEmpty(payloadData.get("roomId"), payloadData.get("room_id"));
                     if (!TextUtils.isEmpty(roomId)) {
@@ -155,27 +152,29 @@ final class TemporarySocketSessionManager {
                     Log.e(TAG, "Error building syncPayload", e);
                 }
                 MessageFlowLogger.log(
-                        context,
-                        sessionTraceId,
-                        sessionMessageId,
-                        sessionRoomId,
-                        null,
-                        "android_sync_messages_emitted",
-                        "Android emitted sync_messages after background socket connect",
-                        "socket",
-                        "success",
-                        syncPayload,
-                        null
+                    context,
+                    sessionTraceId,
+                    sessionMessageId,
+                    sessionRoomId,
+                    null,
+                    "android_sync_messages_emitted",
+                    "Android emitted sync_messages after background socket connect",
+                    "socket",
+                    "success",
+                    syncPayload,
+                    null
                 );
-                socket.emit("sync_messages", (Ack) ackArgs -> {
-                    Log.d(TAG, "Received sync_messages ACK args=" + safePreviewArgs(ackArgs));
-                    JSONObject ackPayload = new JSONObject();
-                    try {
-                        ackPayload.put("ack_args_count", ackArgs != null ? ackArgs.length : 0);
-                    } catch (JSONException e) {
-                        Log.e(TAG, "Error building ackPayload", e);
-                    }
-                    MessageFlowLogger.log(
+                socket.emit(
+                    "sync_messages",
+                    (Ack) (ackArgs) -> {
+                        Log.d(TAG, "Received sync_messages ACK args=" + safePreviewArgs(ackArgs));
+                        JSONObject ackPayload = new JSONObject();
+                        try {
+                            ackPayload.put("ack_args_count", ackArgs != null ? ackArgs.length : 0);
+                        } catch (JSONException e) {
+                            Log.e(TAG, "Error building ackPayload", e);
+                        }
+                        MessageFlowLogger.log(
                             context,
                             sessionTraceId,
                             sessionMessageId,
@@ -187,12 +186,13 @@ final class TemporarySocketSessionManager {
                             "success",
                             ackPayload,
                             null
-                    );
-                    resetIdleTimer.run();
-                });
+                        );
+                        resetIdleTimer.run();
+                    }
+                );
             });
 
-            socket.onAnyIncoming(args -> {
+            socket.onAnyIncoming((args) -> {
                 if (args != null && args.length > 0) {
                     // Reset idle timer for ANY incoming data (including global:online_users)
                     resetIdleTimer.run();
@@ -202,7 +202,15 @@ final class TemporarySocketSessionManager {
 
                     String event = String.valueOf(args[0]);
                     Object[] payloadArgs = args.length > 1 ? Arrays.copyOfRange(args, 1, args.length) : new Object[0];
-                    Log.d(TAG, "Socket incoming event=" + event + " payloadCount=" + payloadArgs.length + " payload=" + safePreviewArgs(payloadArgs));
+                    Log.d(
+                        TAG,
+                        "Socket incoming event=" +
+                            event +
+                            " payloadCount=" +
+                            payloadArgs.length +
+                            " payload=" +
+                            safePreviewArgs(payloadArgs)
+                    );
 
                     if ("sync_messages_response".equals(event)) {
                         syncResponseReceived.set(true);
@@ -228,31 +236,31 @@ final class TemporarySocketSessionManager {
 
                         if ("sync_messages_response".equals(event)) {
                             MessageFlowLogger.log(
-                                    context,
-                                    eventTraceId,
-                                    eventMessageId != null ? eventMessageId : sessionMessageId,
-                                    eventRoomId != null ? eventRoomId : sessionRoomId,
-                                    null,
-                                    "android_sync_messages_response_received",
-                                    "Android received sync_messages_response from server",
-                                    "socket",
-                                    "success",
-                                    eventPayload,
-                                    null
+                                context,
+                                eventTraceId,
+                                eventMessageId != null ? eventMessageId : sessionMessageId,
+                                eventRoomId != null ? eventRoomId : sessionRoomId,
+                                null,
+                                "android_sync_messages_response_received",
+                                "Android received sync_messages_response from server",
+                                "socket",
+                                "success",
+                                eventPayload,
+                                null
                             );
                         } else if ("room:message_notification".equals(event)) {
                             MessageFlowLogger.log(
-                                    context,
-                                    eventTraceId,
-                                    eventMessageId != null ? eventMessageId : sessionMessageId,
-                                    eventRoomId != null ? eventRoomId : sessionRoomId,
-                                    null,
-                                    "android_room_message_notification_received",
-                                    "Android received room:message_notification while app was backgrounded",
-                                    "socket",
-                                    "success",
-                                    eventPayload,
-                                    null
+                                context,
+                                eventTraceId,
+                                eventMessageId != null ? eventMessageId : sessionMessageId,
+                                eventRoomId != null ? eventRoomId : sessionRoomId,
+                                null,
+                                "android_room_message_notification_received",
+                                "Android received room:message_notification while app was backgrounded",
+                                "socket",
+                                "success",
+                                eventPayload,
+                                null
                             );
                         }
                     }
@@ -267,16 +275,16 @@ final class TemporarySocketSessionManager {
                 }
             });
 
-            socket.on(Socket.EVENT_CONNECT_ERROR, args -> {
+            socket.on(Socket.EVENT_CONNECT_ERROR, (args) -> {
                 Log.w(TAG, "Socket connect error: " + firstArgToString(args) + " fullArgs=" + safePreviewArgs(args));
                 finishSession.run();
             });
 
-            socket.on("error", args -> {
+            socket.on("error", (args) -> {
                 Log.w(TAG, "Socket error: " + firstArgToString(args) + " fullArgs=" + safePreviewArgs(args));
             });
 
-            socket.on(Socket.EVENT_DISCONNECT, args -> {
+            socket.on(Socket.EVENT_DISCONNECT, (args) -> {
                 Log.d(TAG, "Socket disconnected. Reason: " + firstArgToString(args) + " fullArgs=" + safePreviewArgs(args));
                 finishSession.run();
             });
@@ -324,8 +332,8 @@ final class TemporarySocketSessionManager {
         boolean handled = false;
         for (Object arg : args) {
             boolean notified = "sync_messages_response".equals(event)
-                    ? EncryptedMessageNotifier.notifyFromSyncMessagesResponse(context, arg)
-                    : EncryptedMessageNotifier.notifyFromSocketPayload(context, arg);
+                ? EncryptedMessageNotifier.notifyFromSyncMessagesResponse(context, arg)
+                : EncryptedMessageNotifier.notifyFromSocketPayload(context, arg);
 
             // Fallback: If socket payload parsing didn't produce a notification AND sync_messages_response was already received,
             // try parsing it as a raw unread API record.
@@ -337,17 +345,17 @@ final class TemporarySocketSessionManager {
 
             if (notified) {
                 MessageFlowLogger.log(
-                        context,
-                        "android-socket-" + System.currentTimeMillis(),
-                        null,
-                        null,
-                        null,
-                        "android_socket_event_processed",
-                        "Android processed socket event and displayed/updated notification",
-                        "socket",
-                        "success",
-                        null,
-                        null
+                    context,
+                    "android-socket-" + System.currentTimeMillis(),
+                    null,
+                    null,
+                    null,
+                    "android_socket_event_processed",
+                    "Android processed socket event and displayed/updated notification",
+                    "socket",
+                    "success",
+                    null,
+                    null
                 );
                 handled = true;
             }
@@ -361,7 +369,7 @@ final class TemporarySocketSessionManager {
         options.reconnection = false;
         options.timeout = config.connectTimeoutMs;
         // Allow both WebSocket and Polling for better compatibility and fallback
-        options.transports = new String[]{WebSocket.NAME, Polling.NAME};
+        options.transports = new String[] { WebSocket.NAME, Polling.NAME };
 
         if (!setAuthIfSupported(options, config.jwtToken)) {
             options.query = "token=" + config.jwtToken;
@@ -385,12 +393,18 @@ final class TemporarySocketSessionManager {
         SharedPreferences prefs = context.getSharedPreferences("safe_storage", Context.MODE_PRIVATE);
         String jwtToken = firstNonEmpty(prefs.getString("token", null), prefs.getString("authToken", null));
         String baseUrl = firstNonEmpty(
-                payloadData != null ? payloadData.get("socketUrl") : null,
-                prefs.getString("socketUrl", null),
-                DEFAULT_SOCKET_URL
+            payloadData != null ? payloadData.get("socketUrl") : null,
+            prefs.getString("socketUrl", null),
+            DEFAULT_SOCKET_URL
         );
 
-        return new SessionConfig(jwtToken, normalizeSocketBaseUrl(baseUrl), DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_MAX_SESSION_MS, (int) DEFAULT_CONNECT_TIMEOUT_MS);
+        return new SessionConfig(
+            jwtToken,
+            normalizeSocketBaseUrl(baseUrl),
+            DEFAULT_IDLE_TIMEOUT_MS,
+            DEFAULT_MAX_SESSION_MS,
+            (int) DEFAULT_CONNECT_TIMEOUT_MS
+        );
     }
 
     private static String normalizeSocketBaseUrl(String baseUrl) {
@@ -452,11 +466,7 @@ final class TemporarySocketSessionManager {
     private static String extractMessageIdFromArgs(Object[] args) {
         JSONObject json = firstJsonObject(args);
         if (json == null) return null;
-        return firstNonEmpty(
-                json.optString("message_id", null),
-                json.optString("messageId", null),
-                json.optString("id", null)
-        );
+        return firstNonEmpty(json.optString("message_id", null), json.optString("messageId", null), json.optString("id", null));
     }
 
     private static Integer extractRoomIdFromArgs(Object[] args) {
@@ -496,6 +506,7 @@ final class TemporarySocketSessionManager {
     }
 
     private static final class SessionConfig {
+
         final String jwtToken;
         final String socketUrl;
         final long idleTimeoutMs;

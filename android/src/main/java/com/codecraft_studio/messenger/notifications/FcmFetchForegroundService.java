@@ -11,7 +11,6 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
 import android.util.Log;
-
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
@@ -135,11 +134,7 @@ public class FcmFetchForegroundService extends Service {
             return;
         }
 
-        NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID,
-                "Message Sync",
-                NotificationManager.IMPORTANCE_LOW
-        );
+        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Message Sync", NotificationManager.IMPORTANCE_LOW);
         channel.setDescription("Keeps message sync alive for incoming push notifications");
 
         NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
@@ -154,10 +149,10 @@ public class FcmFetchForegroundService extends Service {
         if (launchIntent != null) {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             pendingIntent = PendingIntent.getActivity(
-                    this,
-                    0,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                this,
+                0,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
         }
 
@@ -165,13 +160,13 @@ public class FcmFetchForegroundService extends Service {
         if (iconRes == 0) iconRes = android.R.drawable.ic_dialog_info;
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(iconRes)
-                .setContentTitle("Syncing messages")
-                .setContentText("Checking for new encrypted messages")
-                .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setVibrate(new long[]{0});
+            .setSmallIcon(iconRes)
+            .setContentTitle("Syncing messages")
+            .setContentText("Checking for new encrypted messages")
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setVibrate(new long[] { 0 });
 
         if (pendingIntent != null) {
             builder.setContentIntent(pendingIntent);

@@ -2,7 +2,6 @@ package com.codecraft_studio.messenger.notifications;
 
 import android.text.TextUtils;
 import android.util.Log;
-
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -48,7 +47,18 @@ public class MessengerNotificationsPlugin extends Plugin {
             return;
         }
 
-        NotificationHelper.showRoomNotification(getContext(), title, body, roomId, senderId, roomName, messageId, timestamp, false, avatarSvg);
+        NotificationHelper.showRoomNotification(
+            getContext(),
+            title,
+            body,
+            roomId,
+            senderId,
+            roomName,
+            messageId,
+            timestamp,
+            false,
+            avatarSvg
+        );
         call.resolve();
     }
 
@@ -113,9 +123,9 @@ public class MessengerNotificationsPlugin extends Plugin {
     public void checkPermissions(PluginCall call) {
         JSObject result = new JSObject();
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            boolean granted = androidx.core.content.ContextCompat.checkSelfPermission(
-                    getContext(), android.Manifest.permission.POST_NOTIFICATIONS)
-                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            boolean granted =
+                androidx.core.content.ContextCompat.checkSelfPermission(getContext(), android.Manifest.permission.POST_NOTIFICATIONS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED;
             result.put("notifications", granted ? "granted" : "denied");
         } else {
             result.put("notifications", "granted");
@@ -225,9 +235,9 @@ public class MessengerNotificationsPlugin extends Plugin {
             "  console.log('[MessengerNotifications] window.Notification polyfill installed.');" +
             "})();";
 
-        getBridge().getWebView().post(() ->
-            getBridge().getWebView().evaluateJavascript(polyfill, null)
-        );
+        getBridge()
+            .getWebView()
+            .post(() -> getBridge().getWebView().evaluateJavascript(polyfill, null));
     }
 
     private static int resolveRoomId(PluginCall call) {

@@ -5,14 +5,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
 import android.util.Log;
-
 import androidx.annotation.Nullable;
-
 import com.getcapacitor.JSObject;
-
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.text.SimpleDateFormat;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -21,13 +15,14 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 final class EncryptedMessageNotifier {
 
     private static final String TAG = "EncryptedMessageNotifier";
 
-    private EncryptedMessageNotifier() {
-    }
+    private EncryptedMessageNotifier() {}
 
     static boolean notifyFromUnreadApiRecord(Context context, JSONObject item) {
         Log.d(TAG, "notifyFromUnreadApiRecord() item=" + item.toString());
@@ -43,9 +38,13 @@ final class EncryptedMessageNotifier {
         int roomId = parseInt(firstNonEmpty(payloadData.get("roomId"), payloadData.get("room_id")), 0);
         int senderId = parseInt(firstNonEmpty(payloadData.get("senderId"), payloadData.get("sender_id")), 0);
 
-        String rawRoomName = firstNonEmpty(payloadData.get("encrypted_room_name"), payloadData.get("encryptedRoomName"), payloadData.get("room_name"));
+        String rawRoomName = firstNonEmpty(
+            payloadData.get("encrypted_room_name"),
+            payloadData.get("encryptedRoomName"),
+            payloadData.get("room_name")
+        );
         String roomName = decryptRoomName(context, roomId, rawRoomName);
-        
+
         if (roomId > 0) {
             if (isActuallyDecrypted(roomName)) {
                 NotificationHelper.setRoomName(context, roomId, roomName);
@@ -59,31 +58,28 @@ final class EncryptedMessageNotifier {
         long timestamp = parseTimestamp(payloadData.get("created_at"));
 
         String username = decryptUserName(
-                context,
-                senderId,
-                firstNonEmpty(
-                        payloadData.get("encrypted_username"),
-                        payloadData.get("encryptedUsername"),
-                        payloadData.get("sender_name"),
-                        payloadData.get("senderName"),
-                        payloadData.get("username")
-                )
+            context,
+            senderId,
+            firstNonEmpty(
+                payloadData.get("encrypted_username"),
+                payloadData.get("encryptedUsername"),
+                payloadData.get("sender_name"),
+                payloadData.get("senderName"),
+                payloadData.get("username")
+            )
         );
-                String avatarSvg = firstNonEmpty(
-                    payloadData.get("avatar_svg"),
-                    payloadData.get("avatarSvg")
-                );
+        String avatarSvg = firstNonEmpty(payloadData.get("avatar_svg"), payloadData.get("avatarSvg"));
 
         String message = decryptRoomMessage(
-                context,
-                roomId,
-                firstNonEmpty(
-                        payloadData.get("encrypted_message"),
-                        payloadData.get("encryptedMessage"),
-                        payloadData.get("body"),
-                        payloadData.get("message"),
-                        payloadData.get("ciphertext")
-                )
+            context,
+            roomId,
+            firstNonEmpty(
+                payloadData.get("encrypted_message"),
+                payloadData.get("encryptedMessage"),
+                payloadData.get("body"),
+                payloadData.get("message"),
+                payloadData.get("ciphertext")
+            )
         );
 
         if (isGenericOrEmpty(message)) {
@@ -93,19 +89,19 @@ final class EncryptedMessageNotifier {
         }
 
         return showNotification(
-                context,
-                roomId,
-                senderId,
-                username,
-                roomName,
-                message,
-                firstNonEmpty(payloadData.get("title"), payloadData.get("notification_title")),
-                firstNonEmpty(payloadData.get("body"), payloadData.get("message")),
-                messageId,
-                timestamp,
-                false,
-                false,
-                avatarSvg
+            context,
+            roomId,
+            senderId,
+            username,
+            roomName,
+            message,
+            firstNonEmpty(payloadData.get("title"), payloadData.get("notification_title")),
+            firstNonEmpty(payloadData.get("body"), payloadData.get("message")),
+            messageId,
+            timestamp,
+            false,
+            false,
+            avatarSvg
         );
     }
 
@@ -186,36 +182,39 @@ final class EncryptedMessageNotifier {
         JSONObject room = payload.optJSONObject("room");
         JSONObject normalized = new JSONObject();
         String normalizedMessageId = firstNonEmpty(
-                payload.optString("id", null),
-                payload.optString("messageId", null),
-                payload.optString("message_id", null),
-                message != null ? message.optString("id", null) : null,
-                message != null ? message.optString("messageId", null) : null,
-                message != null ? message.optString("message_id", null) : null,
-                envelope != null ? envelope.optString("id", null) : null,
-                envelope != null ? envelope.optString("message_id", null) : null
+            payload.optString("id", null),
+            payload.optString("messageId", null),
+            payload.optString("message_id", null),
+            message != null ? message.optString("id", null) : null,
+            message != null ? message.optString("messageId", null) : null,
+            message != null ? message.optString("message_id", null) : null,
+            envelope != null ? envelope.optString("id", null) : null,
+            envelope != null ? envelope.optString("message_id", null) : null
         );
 
         int roomId = firstPositiveInt(
-                message != null ? message.optInt("room_id", message.optInt("roomId", 0)) : 0,
-                payload.optInt("room_id", payload.optInt("roomId", 0)),
-                room != null ? room.optInt("id", room.optInt("room_id", room.optInt("roomId", 0))) : 0,
-                envelope != null ? envelope.optInt("room_id", envelope.optInt("roomId", 0)) : 0,
-                envelope != null ? envelope.optInt("room_id_fallback", 0) : 0
+            message != null ? message.optInt("room_id", message.optInt("roomId", 0)) : 0,
+            payload.optInt("room_id", payload.optInt("roomId", 0)),
+            room != null ? room.optInt("id", room.optInt("room_id", room.optInt("roomId", 0))) : 0,
+            envelope != null ? envelope.optInt("room_id", envelope.optInt("roomId", 0)) : 0,
+            envelope != null ? envelope.optInt("room_id_fallback", 0) : 0
         );
         int senderId = firstPositiveInt(
-                message != null ? message.optInt("sender_id", message.optInt("senderId", 0)) : 0,
-                payload.optInt("sender_id", payload.optInt("senderId", 0)),
-                sender != null ? sender.optInt("id", sender.optInt("sender_id", sender.optInt("senderId", 0))) : 0,
-                envelope != null ? envelope.optInt("sender_id", envelope.optInt("senderId", 0)) : 0,
-                payload.optInt("userId", payload.optInt("user_id", 0))
+            message != null ? message.optInt("sender_id", message.optInt("senderId", 0)) : 0,
+            payload.optInt("sender_id", payload.optInt("senderId", 0)),
+            sender != null ? sender.optInt("id", sender.optInt("sender_id", sender.optInt("senderId", 0))) : 0,
+            envelope != null ? envelope.optInt("sender_id", envelope.optInt("senderId", 0)) : 0,
+            payload.optInt("userId", payload.optInt("user_id", 0))
         );
 
         putSafe(normalized, "room_id", roomId);
         putSafe(normalized, "sender_id", senderId);
         putSafe(normalized, "id", normalizedMessageId);
         putSafe(normalized, "message_id", normalizedMessageId);
-        putSafe(normalized, "encrypted_message", firstNonEmpty(
+        putSafe(
+            normalized,
+            "encrypted_message",
+            firstNonEmpty(
                 payload.optString("encrypted_message", null),
                 payload.optString("encryptedMessage", null),
                 message != null ? message.optString("encrypted_message", null) : null,
@@ -223,8 +222,12 @@ final class EncryptedMessageNotifier {
                 payload.optString("body", null),
                 message != null ? message.optString("ciphertext", null) : null,
                 payload.optString("ciphertext", null)
-        ));
-        putSafe(normalized, "encrypted_username", firstNonEmpty(
+            )
+        );
+        putSafe(
+            normalized,
+            "encrypted_username",
+            firstNonEmpty(
                 payload.optString("encrypted_username", null),
                 payload.optString("encryptedUsername", null),
                 sender != null ? sender.optString("encrypted_username", null) : null,
@@ -232,8 +235,12 @@ final class EncryptedMessageNotifier {
                 payload.optString("senderName", null),
                 sender != null ? sender.optString("username", null) : null,
                 payload.optString("username", null)
-        ));
-        putSafe(normalized, "encrypted_room_name", firstNonEmpty(
+            )
+        );
+        putSafe(
+            normalized,
+            "encrypted_room_name",
+            firstNonEmpty(
                 payload.optString("encrypted_room_name", null),
                 payload.optString("encryptedRoomName", null),
                 room != null ? room.optString("encrypted_room_name", null) : null,
@@ -242,40 +249,52 @@ final class EncryptedMessageNotifier {
                 payload.optString("room_name", null),
                 envelope != null ? envelope.optString("encrypted_room_name", null) : null,
                 message != null ? message.optString("encrypted_room_name", null) : null
-        ));
-        putSafe(normalized, "created_at", firstNonEmpty(
+            )
+        );
+        putSafe(
+            normalized,
+            "created_at",
+            firstNonEmpty(
                 payload.optString("created_at", null),
                 payload.optString("createdAt", null),
                 message != null ? message.optString("created_at", null) : null
-        ));
-        putSafe(normalized, "avatar_svg", firstNonEmpty(
-            payload.optString("avatar_svg", null),
-            payload.optString("avatarSvg", null),
-            sender != null ? sender.optString("avatar_svg", null) : null,
-            sender != null ? sender.optString("avatarSvg", null) : null,
-            message != null ? message.optString("avatar_svg", null) : null,
-            envelope != null ? envelope.optString("avatar_svg", null) : null
-        ));
+            )
+        );
+        putSafe(
+            normalized,
+            "avatar_svg",
+            firstNonEmpty(
+                payload.optString("avatar_svg", null),
+                payload.optString("avatarSvg", null),
+                sender != null ? sender.optString("avatar_svg", null) : null,
+                sender != null ? sender.optString("avatarSvg", null) : null,
+                message != null ? message.optString("avatar_svg", null) : null,
+                envelope != null ? envelope.optString("avatar_svg", null) : null
+            )
+        );
 
         return normalized;
     }
 
     private static boolean showNotification(
-            Context context,
-            int roomId,
-            int senderId,
-            String username,
-            String roomName,
-            String message,
-            String explicitTitle,
-            String explicitBody,
-            @Nullable String messageId,
-            long timestamp,
-            boolean isSync,
-                boolean deferRender,
-                @Nullable String avatarSvg
+        Context context,
+        int roomId,
+        int senderId,
+        String username,
+        String roomName,
+        String message,
+        String explicitTitle,
+        String explicitBody,
+        @Nullable String messageId,
+        long timestamp,
+        boolean isSync,
+        boolean deferRender,
+        @Nullable String avatarSvg
     ) {
-        Log.d(TAG, "showNotification: avatarSvg present=" + (avatarSvg != null) + " length=" + (avatarSvg != null ? avatarSvg.length() : 0));
+        Log.d(
+            TAG,
+            "showNotification: avatarSvg present=" + (avatarSvg != null) + " length=" + (avatarSvg != null ? avatarSvg.length() : 0)
+        );
         String title;
         if (TextUtils.isEmpty(message) && TextUtils.isEmpty(explicitBody)) {
             Log.d(TAG, "Ignoring notification: No message content available.");
@@ -287,45 +306,65 @@ final class EncryptedMessageNotifier {
         if (!TextUtils.isEmpty(explicitTitle) && !shouldIgnoreGenericPushTitle(explicitTitle)) {
             title = explicitTitle;
         } else if (!TextUtils.isEmpty(username) && !TextUtils.isEmpty(roomName) && isActuallyDecrypted(roomName)) {
-    if (username.equalsIgnoreCase(roomName)) {
-        title = username;
-    } else {
-        title = username + " in " + roomName;
-    }
-} else if (!TextUtils.isEmpty(username)) {
-    title = username;
+            if (username.equalsIgnoreCase(roomName)) {
+                title = username;
+            } else {
+                title = username + " in " + roomName;
+            }
+        } else if (!TextUtils.isEmpty(username)) {
+            title = username;
         } else if (!TextUtils.isEmpty(roomName) && isActuallyDecrypted(roomName)) {
             title = "New message in " + roomName;
         } else {
             title = "New Message";
         }
 
-
         String finalBody = !TextUtils.isEmpty(message) ? message : explicitBody;
         if (isSync) {
-    boolean hasRealMessageId = !TextUtils.isEmpty(messageId);
-    boolean hasUsableBody = !TextUtils.isEmpty(finalBody)
-            && !finalBody.trim().isEmpty()
-            && !isGenericOrEmpty(finalBody)
-            && !"New encrypted message".equalsIgnoreCase(finalBody.trim());
+            boolean hasRealMessageId = !TextUtils.isEmpty(messageId);
+            boolean hasUsableBody =
+                !TextUtils.isEmpty(finalBody) &&
+                !finalBody.trim().isEmpty() &&
+                !isGenericOrEmpty(finalBody) &&
+                !"New encrypted message".equalsIgnoreCase(finalBody.trim());
 
-    if (!hasRealMessageId || !hasUsableBody) {
-        Log.d(TAG, "Ignoring sync notification with no usable message data");
-        return false;
-    }
-}
+            if (!hasRealMessageId || !hasUsableBody) {
+                Log.d(TAG, "Ignoring sync notification with no usable message data");
+                return false;
+            }
+        }
         // 4. SECONDARY SAFETY: If finalBody is still empty (or just whitespace), stop.
         if (TextUtils.isEmpty(finalBody) || finalBody.trim().isEmpty()) {
             return false;
         }
         if (deferRender) {
-            return NotificationHelper.addMessageToHistory(context, roomId, senderId, messageId, title, finalBody, roomName, timestamp, isSync, avatarSvg);
+            return NotificationHelper.addMessageToHistory(
+                context,
+                roomId,
+                senderId,
+                messageId,
+                title,
+                finalBody,
+                roomName,
+                timestamp,
+                isSync,
+                avatarSvg
+            );
         }
-        NotificationHelper.showRoomNotification(context, title, finalBody, roomId, senderId, roomName, messageId, timestamp, isSync, avatarSvg);
+        NotificationHelper.showRoomNotification(
+            context,
+            title,
+            finalBody,
+            roomId,
+            senderId,
+            roomName,
+            messageId,
+            timestamp,
+            isSync,
+            avatarSvg
+        );
 
-        String traceId = !TextUtils.isEmpty(messageId)
-                ? "msg-" + messageId
-                : "android-native-notify-" + roomId + "-" + timestamp;
+        String traceId = !TextUtils.isEmpty(messageId) ? "msg-" + messageId : "android-native-notify-" + roomId + "-" + timestamp;
         JSONObject payload = new JSONObject();
         try {
             payload.put("title", title);
@@ -334,17 +373,17 @@ final class EncryptedMessageNotifier {
             payload.put("defer_render", deferRender);
         } catch (Exception ignored) {}
         MessageFlowLogger.log(
-                context,
-                traceId,
-                messageId,
-                roomId > 0 ? roomId : null,
-                senderId > 0 ? senderId : null,
-                "android_notification_displayed",
-                "Android native layer displayed message notification",
-                "notification",
-                "success",
-                payload,
-                null
+            context,
+            traceId,
+            messageId,
+            roomId > 0 ? roomId : null,
+            senderId > 0 ? senderId : null,
+            "android_notification_displayed",
+            "Android native layer displayed message notification",
+            "notification",
+            "success",
+            payload,
+            null
         );
         return true;
     }
@@ -361,52 +400,59 @@ final class EncryptedMessageNotifier {
     }
 
     private static boolean notifyFromSyncMessagesArray(Context context, JSONArray messages) {
-    boolean any = false;
-    Set<Integer> processedRooms = new HashSet<>();
-    Set<Integer> roomsWithNewMessages = new HashSet<>();
-    Map<Integer, String> lastRoomNames = new HashMap<>();
+        boolean any = false;
+        Set<Integer> processedRooms = new HashSet<>();
+        Set<Integer> roomsWithNewMessages = new HashSet<>();
+        Map<Integer, String> lastRoomNames = new HashMap<>();
 
-    for (int i = 0; i < messages.length(); i++) {
-        JSONObject item = messages.optJSONObject(i);
-        if (item == null) continue;
+        for (int i = 0; i < messages.length(); i++) {
+            JSONObject item = messages.optJSONObject(i);
+            if (item == null) continue;
 
-        JSONObject normalized = normalizeSocketMessagePayload(item);
-        int roomId = normalized.optInt("room_id", 0);
+            JSONObject normalized = normalizeSocketMessagePayload(item);
+            int roomId = normalized.optInt("room_id", 0);
 
-        if (roomId > 0 && !processedRooms.contains(roomId)) {
-            boolean notifActive = NotificationHelper.isNotificationActive(context, roomId);
-            if (!notifActive) {
-                NotificationHelper.clearRoomHistory(context, roomId, false);
+            if (roomId > 0 && !processedRooms.contains(roomId)) {
+                boolean notifActive = NotificationHelper.isNotificationActive(context, roomId);
+                if (!notifActive) {
+                    NotificationHelper.clearRoomHistory(context, roomId, false);
+                }
+                processedRooms.add(roomId);
             }
-            processedRooms.add(roomId);
+
+            if (notifyFromNormalizedRecord(context, normalized, false, false, true)) {
+                any = true;
+                if (roomId > 0) {
+                    roomsWithNewMessages.add(roomId);
+                }
+
+                String roomName = decryptRoomName(context, roomId, normalized.optString("encrypted_room_name", null));
+                if (isActuallyDecrypted(roomName)) {
+                    lastRoomNames.put(roomId, roomName);
+                }
+            }
         }
 
-        if (notifyFromNormalizedRecord(context, normalized, false, false, true)) {
-            any = true;
-            if (roomId > 0) {
-                roomsWithNewMessages.add(roomId);
-            }
-
-            String roomName = decryptRoomName(context, roomId, normalized.optString("encrypted_room_name", null));
-            if (isActuallyDecrypted(roomName)) {
-                lastRoomNames.put(roomId, roomName);
-            }
+        for (int roomId : roomsWithNewMessages) {
+            String roomName = lastRoomNames.get(roomId);
+            String title = (roomName != null) ? roomName : "New Message";
+            NotificationHelper.triggerNotificationUpdate(context, roomId, title);
         }
+
+        return any;
     }
 
-    for (int roomId : roomsWithNewMessages) {
-        String roomName = lastRoomNames.get(roomId);
-        String title = (roomName != null) ? roomName : "New Message";
-        NotificationHelper.triggerNotificationUpdate(context, roomId, title);
-    }
-
-    return any;
-}
     private static boolean notifyFromNormalizedRecord(Context context, JSONObject normalized, boolean clearHistoryFirst, boolean isSync) {
         return notifyFromNormalizedRecord(context, normalized, clearHistoryFirst, isSync, false);
     }
 
-    private static boolean notifyFromNormalizedRecord(Context context, JSONObject normalized, boolean clearHistoryFirst, boolean isSync, boolean deferRender) {
+    private static boolean notifyFromNormalizedRecord(
+        Context context,
+        JSONObject normalized,
+        boolean clearHistoryFirst,
+        boolean isSync,
+        boolean deferRender
+    ) {
         int roomId = normalized.optInt("room_id", 0);
         int senderId = normalized.optInt("sender_id", 0);
         String messageId = firstNonEmpty(normalized.optString("id", null), normalized.optString("message_id", null));
@@ -418,9 +464,9 @@ final class EncryptedMessageNotifier {
         }
 
         String rawRoomName = firstNonEmpty(
-                normalized.optString("encrypted_room_name", null),
-                normalized.optString("room_name", null),
-                normalized.optString("encryptedRoomName", null)
+            normalized.optString("encrypted_room_name", null),
+            normalized.optString("room_name", null),
+            normalized.optString("encryptedRoomName", null)
         );
         String roomName = decryptRoomName(context, roomId, rawRoomName);
 
@@ -433,8 +479,25 @@ final class EncryptedMessageNotifier {
             }
         }
 
-        String username = decryptUserName(context, senderId, firstNonEmpty(normalized.optString("encrypted_username", null), normalized.optString("sender_name", null), normalized.optString("username", null)));
-        String message = decryptRoomMessage(context, roomId, firstNonEmpty(normalized.optString("encrypted_message", null), normalized.optString("message", null), normalized.optString("body", null), normalized.optString("ciphertext", null)));
+        String username = decryptUserName(
+            context,
+            senderId,
+            firstNonEmpty(
+                normalized.optString("encrypted_username", null),
+                normalized.optString("sender_name", null),
+                normalized.optString("username", null)
+            )
+        );
+        String message = decryptRoomMessage(
+            context,
+            roomId,
+            firstNonEmpty(
+                normalized.optString("encrypted_message", null),
+                normalized.optString("message", null),
+                normalized.optString("body", null),
+                normalized.optString("ciphertext", null)
+            )
+        );
 
         if (isGenericOrEmpty(message)) {
             if (!TextUtils.isEmpty(roomName) && isActuallyDecrypted(roomName)) {
@@ -443,19 +506,19 @@ final class EncryptedMessageNotifier {
         }
 
         return showNotification(
-                context,
-                roomId,
-                senderId,
-                username,
-                roomName,
-                message,
-                normalized.optString("title", null),
-                normalized.optString("body", null),
-                messageId,
-                timestamp,
-                isSync,
-                deferRender,
-                normalized.optString("avatar_svg", null)
+            context,
+            roomId,
+            senderId,
+            username,
+            roomName,
+            message,
+            normalized.optString("title", null),
+            normalized.optString("body", null),
+            messageId,
+            timestamp,
+            isSync,
+            deferRender,
+            normalized.optString("avatar_svg", null)
         );
     }
 
@@ -473,7 +536,12 @@ final class EncryptedMessageNotifier {
     private static boolean shouldIgnoreGenericPushTitle(String title) {
         if (TextUtils.isEmpty(title)) return true;
         String normalized = title.trim().toLowerCase();
-        return "new message".equals(normalized) || "new messages".equals(normalized) || "message".equals(normalized) || "messages".equals(normalized);
+        return (
+            "new message".equals(normalized) ||
+            "new messages".equals(normalized) ||
+            "message".equals(normalized) ||
+            "messages".equals(normalized)
+        );
     }
 
     private static String decryptRoomName(Context context, int roomId, String encryptedRoomName) {
@@ -520,7 +588,11 @@ final class EncryptedMessageNotifier {
     private static boolean looksLikeEncryptedJson(String value) {
         if (value == null) return false;
         String v = value.trim();
-        return v.startsWith("{") && (v.contains("encryptedData") || v.contains("encryptedMessage") || v.contains("ciphertext")) && (v.contains("iv") || v.contains("nonce"));
+        return (
+            v.startsWith("{") &&
+            (v.contains("encryptedData") || v.contains("encryptedMessage") || v.contains("ciphertext")) &&
+            (v.contains("iv") || v.contains("nonce"))
+        );
     }
 
     private static boolean looksLikeCiphertextBlob(String value) {
@@ -536,13 +608,22 @@ final class EncryptedMessageNotifier {
 
     private static int parseInt(String value, int fallback) {
         if (TextUtils.isEmpty(value)) return fallback;
-        try { return Integer.parseInt(value); } catch (NumberFormatException e) { return fallback; }
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private static long parseTimestamp(String value) {
         if (TextUtils.isEmpty(value) || "null".equalsIgnoreCase(value)) return 0;
         try {
-            String[] formats = {"yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", "yyyy-MM-dd'T'HH:mm:ss'Z'", "yyyy-MM-dd'T'HH:mm:ss"};
+            String[] formats = {
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss'Z'",
+                "yyyy-MM-dd'T'HH:mm:ss"
+            };
             for (String fmt : formats) {
                 try {
                     SimpleDateFormat sdf = new SimpleDateFormat(fmt, Locale.US);
@@ -551,7 +632,9 @@ final class EncryptedMessageNotifier {
                 } catch (Exception ignored) {}
             }
             return Long.parseLong(value);
-        } catch (Exception e) { return 0; }
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     private static int firstPositiveInt(int... values) {
@@ -565,7 +648,9 @@ final class EncryptedMessageNotifier {
     }
 
     private static void putSafe(JSONObject object, String key, Object value) {
-        try { object.put(key, value); } catch (Exception ignored) {}
+        try {
+            object.put(key, value);
+        } catch (Exception ignored) {}
     }
 
     private static boolean shouldSuppressNotificationForRoom(Context context, int roomId) {
@@ -583,7 +668,13 @@ final class EncryptedMessageNotifier {
         // Legacy key compatibility: 1 means enabled; anything else means disabled.
         String legacyEnabledRaw = prefs.getString("push_notifications_room_" + roomId, null);
         if (!TextUtils.isEmpty(legacyEnabledRaw) && !"1".equals(legacyEnabledRaw)) {
-            Log.d(TAG, "Suppressing notification: legacy room notifications disabled. roomId=" + roomId + " push_notifications_room_=" + legacyEnabledRaw);
+            Log.d(
+                TAG,
+                "Suppressing notification: legacy room notifications disabled. roomId=" +
+                    roomId +
+                    " push_notifications_room_=" +
+                    legacyEnabledRaw
+            );
             return true;
         }
 
@@ -615,8 +706,10 @@ final class EncryptedMessageNotifier {
             if (!packageName.equals(process.processName)) continue;
 
             int importance = process.importance;
-            return importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-                    || importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
+            return (
+                importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE
+            );
         }
 
         return false;

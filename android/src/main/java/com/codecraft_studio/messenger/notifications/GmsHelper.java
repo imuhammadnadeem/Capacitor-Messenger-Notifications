@@ -5,6 +5,7 @@ import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
 
 public final class GmsHelper {
+
     private GmsHelper() {}
 
     public static boolean isGmsAvailable(Context context) {

@@ -8,14 +8,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.PowerManager;
 import android.text.TextUtils;
 import android.util.Log;
-
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
-
-import android.os.PowerManager;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -37,7 +35,7 @@ public final class FcmFetchManager {
     public static final long WEBSOCKET_DRAIN_TIMEOUT_MS = 2 * 60 * 1000L;
 
     // Use 1 to prevent multiple parallel socket connections which cause "transport error"
-    private static final int MAX_ACTIVE_FETCHES = 1; 
+    private static final int MAX_ACTIVE_FETCHES = 1;
     private static final int MAY_HAVE_MESSAGES_NOTIFICATION_ID = 91002;
     private static final String MAY_HAVE_MESSAGES_CHANNEL_ID = "fcm_may_have_messages";
 
@@ -51,8 +49,7 @@ public final class FcmFetchManager {
     private static final long NOTIFICATION_GRACE_MS = 10_000L;
     private static volatile long lastAnyNotificationMs = 0L;
 
-    private FcmFetchManager() {
-    }
+    private FcmFetchManager() {}
 
     public static synchronized boolean isFetchActive() {
         return activeCount > 0;
@@ -97,8 +94,13 @@ public final class FcmFetchManager {
     }
 
     public static void enqueueFetch(Context context, boolean highPriority, Map<String, String> payloadData) {
-        Log.i(TAG, "[ENTRY][FCM_FETCH_MANAGER] enqueueFetch() highPriority=" + highPriority
-                + " payloadKeys=" + (payloadData == null ? 0 : payloadData.size()));
+        Log.i(
+            TAG,
+            "[ENTRY][FCM_FETCH_MANAGER] enqueueFetch() highPriority=" +
+                highPriority +
+                " payloadKeys=" +
+                (payloadData == null ? 0 : payloadData.size())
+        );
         final Context appContext = context.getApplicationContext();
         synchronized (FcmFetchManager.class) {
             // if (shouldSkipRedundantFetch(payloadData)) {
@@ -211,8 +213,7 @@ public final class FcmFetchManager {
 
     private static void postMayHaveMessagesNotification(Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 return;
             }
         }
@@ -224,10 +225,10 @@ public final class FcmFetchManager {
         if (launchIntent != null) {
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             pendingIntent = PendingIntent.getActivity(
-                    context,
-                    0,
-                    launchIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+                context,
+                0,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
             );
         }
 
@@ -235,12 +236,12 @@ public final class FcmFetchManager {
         if (notificationIconRes == 0) notificationIconRes = android.R.drawable.ic_dialog_info;
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, MAY_HAVE_MESSAGES_CHANNEL_ID)
-                .setSmallIcon(notificationIconRes)
-                .setContentTitle("New messages available")
-                .setContentText("Tap to sync your encrypted chats")
-                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-                .setOnlyAlertOnce(true)
-                .setAutoCancel(true);
+            .setSmallIcon(notificationIconRes)
+            .setContentTitle("New messages available")
+            .setContentText("Tap to sync your encrypted chats")
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true);
 
         if (pendingIntent != null) {
             builder.setContentIntent(pendingIntent);
@@ -254,16 +255,20 @@ public final class FcmFetchManager {
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager == null) return;
         NotificationChannel channel = new NotificationChannel(
-                MAY_HAVE_MESSAGES_CHANNEL_ID,
-                "Message Alerts",
-                NotificationManager.IMPORTANCE_DEFAULT
+            MAY_HAVE_MESSAGES_CHANNEL_ID,
+            "Message Alerts",
+            NotificationManager.IMPORTANCE_DEFAULT
         );
         manager.createNotificationChannel(channel);
     }
 
     private static int parseInt(String value, int fallback) {
         if (TextUtils.isEmpty(value)) return fallback;
-        try { return Integer.parseInt(value); } catch (Exception e) { return fallback; }
+        try {
+            return Integer.parseInt(value);
+        } catch (Exception e) {
+            return fallback;
+        }
     }
 
     private static String firstNonEmpty(String... values) {

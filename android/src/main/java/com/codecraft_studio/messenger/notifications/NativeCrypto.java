@@ -3,14 +3,16 @@ package com.codecraft_studio.messenger.notifications;
 import android.content.Context;
 import android.content.SharedPreferences;
 import com.getcapacitor.JSObject;
-
-import org.libsodium.jni.NaCl;
-import org.libsodium.jni.Sodium;
 import java.util.Base64;
 import org.json.JSONObject;
+import org.libsodium.jni.NaCl;
+import org.libsodium.jni.Sodium;
 
 public class NativeCrypto {
-    static { NaCl.sodium(); }
+
+    static {
+        NaCl.sodium();
+    }
 
     private final Context context;
 
@@ -72,7 +74,6 @@ public class NativeCrypto {
 
             // Return the privateKey value from the obtained keypair object
             return roomKeyPair.optString("privateKey", null);
-
         } catch (Exception e) {
             e.printStackTrace();
             return null;
@@ -102,7 +103,6 @@ public class NativeCrypto {
 
             // Return the privateKey value from the obtained keypair object
             return userKeyPair.optString("privateKey", null);
-
         } catch (Exception e) {
             e.printStackTrace();
             return null;

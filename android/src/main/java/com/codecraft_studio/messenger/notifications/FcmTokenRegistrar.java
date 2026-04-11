@@ -4,7 +4,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
 import android.util.Log;
-
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -34,18 +33,17 @@ final class FcmTokenRegistrar {
     private static final int READ_TIMEOUT_MS = 10_000;
 
     private static final List<String> BASE_URL_KEYS = Arrays.asList(
-            "backendBaseUrl",
-            "backend_url",
-            "apiBaseUrl",
-            "api_base_url",
-            "serverUrl",
-            "server_url"
+        "backendBaseUrl",
+        "backend_url",
+        "apiBaseUrl",
+        "api_base_url",
+        "serverUrl",
+        "server_url"
     );
 
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
 
-    private FcmTokenRegistrar() {
-    }
+    private FcmTokenRegistrar() {}
 
     static void registerIfPossible(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -62,10 +60,7 @@ final class FcmTokenRegistrar {
             return;
         }
 
-        String jwtToken = firstNonEmpty(
-                prefs.getString("token", null),
-                prefs.getString("authToken", null)
-        );
+        String jwtToken = firstNonEmpty(prefs.getString("token", null), prefs.getString("authToken", null));
         if (TextUtils.isEmpty(jwtToken)) {
             Log.d(TAG, "No JWT token yet (user not logged in). JS will register token after login.");
             return;
@@ -115,10 +110,7 @@ final class FcmTokenRegistrar {
             int status = conn.getResponseCode();
             if (status >= 200 && status < 300) {
                 Log.i(TAG, "FCM token registered successfully (HTTP " + status + ").");
-                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                        .edit()
-                        .putBoolean("fcmTokenRegistered", true)
-                        .apply();
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putBoolean("fcmTokenRegistered", true).apply();
             } else {
                 Log.w(TAG, "FCM token registration failed (HTTP " + status + "). Will retry.");
             }
@@ -136,9 +128,7 @@ final class FcmTokenRegistrar {
         if (TextUtils.isEmpty(endpointPath)) {
             endpointPath = DEFAULT_ENDPOINT_PATH;
         }
-        String normalizedBase = baseUrl.endsWith("/")
-                ? baseUrl.substring(0, baseUrl.length() - 1)
-                : baseUrl;
+        String normalizedBase = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         String normalizedPath = endpointPath.startsWith("/") ? endpointPath : "/" + endpointPath;
         return normalizedBase + normalizedPath;
     }

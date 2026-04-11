@@ -4,12 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.text.TextUtils;
 import android.util.Log;
-
 import androidx.annotation.Nullable;
-
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
@@ -18,6 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 final class UnreadMessagesFetcher {
 
@@ -26,16 +23,15 @@ final class UnreadMessagesFetcher {
     private static final int READ_TIMEOUT_MS = 12000;
     private static final String DEFAULT_BASE_URL = "https://4.rw";
     private static final List<String> BASE_URL_PREF_KEYS = Arrays.asList(
-            "backendBaseUrl",
-            "backend_url",
-            "apiBaseUrl",
-            "api_base_url",
-            "serverUrl",
-            "server_url"
+        "backendBaseUrl",
+        "backend_url",
+        "apiBaseUrl",
+        "api_base_url",
+        "serverUrl",
+        "server_url"
     );
 
-    private UnreadMessagesFetcher() {
-    }
+    private UnreadMessagesFetcher() {}
 
     static boolean fetchAndNotify(Context context, @Nullable Map<String, String> payloadData) {
         try {
@@ -118,21 +114,21 @@ final class UnreadMessagesFetcher {
                 return true;
             }
 
-                JSONObject p = new JSONObject();
-                p.put("message_count", messages.length());
-                MessageFlowLogger.log(
-                    context,
-                    "android-unread-" + System.currentTimeMillis(),
-                    null,
-                    null,
-                    null,
-                    "android_unread_fetch_completed",
-                    "Android unread API completed",
-                    "api",
-                    "success",
-                    p,
-                    null
-                );
+            JSONObject p = new JSONObject();
+            p.put("message_count", messages.length());
+            MessageFlowLogger.log(
+                context,
+                "android-unread-" + System.currentTimeMillis(),
+                null,
+                null,
+                null,
+                "android_unread_fetch_completed",
+                "Android unread API completed",
+                "api",
+                "success",
+                p,
+                null
+            );
 
             for (int i = 0; i < messages.length(); i++) {
                 JSONObject item = messages.optJSONObject(i);
@@ -165,12 +161,12 @@ final class UnreadMessagesFetcher {
             }
 
             String baseUrlFromPayload = firstNonEmpty(
-                    payloadData.get("base_url"),
-                    payloadData.get("baseUrl"),
-                    payloadData.get("backend_url"),
-                    payloadData.get("backendUrl"),
-                    payloadData.get("api_base_url"),
-                    payloadData.get("apiBaseUrl")
+                payloadData.get("base_url"),
+                payloadData.get("baseUrl"),
+                payloadData.get("backend_url"),
+                payloadData.get("backendUrl"),
+                payloadData.get("api_base_url"),
+                payloadData.get("apiBaseUrl")
             );
             if (!TextUtils.isEmpty(baseUrlFromPayload)) {
                 return joinUrl(baseUrlFromPayload, "/api/rooms/messages/unread");
